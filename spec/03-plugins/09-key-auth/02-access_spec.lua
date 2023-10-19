@@ -97,6 +97,7 @@ for _, strategy in helpers.each_strategy() do
         route = { id = route2.id },
         config   = {
           hide_credentials = true,
+          realm = "test-realm"
         },
       }
 
@@ -243,6 +244,41 @@ for _, strategy in helpers.each_strategy() do
         assert.not_nil(json)
         assert.matches("No API key found in request", json.message)
       end)
+      describe("when realm is not configured", function()
+        it("returns Unauthorized on empty key header with no realm", function()
+          local res = assert(proxy_client:send {
+            method  = "GET",
+            path    = "/status/200",
+            headers = {
+              ["Host"] = "key-auth1.test",
+              ["apikey"] = "",
+            }
+          })
+          local body = assert.res_status(401, res)
+          local json = cjson.decode(body)
+          assert.not_nil(json)
+          assert.matches("No API key found in request", json.message)
+          assert.equal('Key', res.headers["WWW-Authenticate"])
+        end)
+      end)
+      describe("when realm is configured", function()
+        it("returns Unauthorized on empty key header with conifgured realm", function()
+          local res = assert(proxy_client:send {
+            method  = "GET",
+            path    = "/status/200",
+            headers = {
+              ["Host"] = "key-auth2.test",
+              ["apikey"] = "",
+            }
+          })
+          local body = assert.res_status(401, res)
+          local json = cjson.decode(body)
+          assert.not_nil(json)
+          assert.matches("No API key found in request", json.message)
+          assert.equal('Key realm="test-realm"', res.headers["WWW-Authenticate"])
+        end)
+      end)
+
       it("returns Unauthorized on empty key querystring", function()
         local res = assert(proxy_client:send {
           method  = "GET",
@@ -255,6 +291,7 @@ for _, strategy in helpers.each_strategy() do
         local json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("No API key found in request", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
       it("returns WWW-Authenticate header on missing credentials", function()
         local res = assert(proxy_client:send {
@@ -265,7 +302,7 @@ for _, strategy in helpers.each_strategy() do
           }
         })
         res:read_body()
-        assert.equal('Key realm="' .. meta._NAME .. '"', res.headers["WWW-Authenticate"])
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
     end)
 
@@ -292,6 +329,7 @@ for _, strategy in helpers.each_strategy() do
         local json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("Invalid authentication credentials", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
       it("handles duplicated key in querystring", function()
         local res = assert(proxy_client:send {
@@ -305,6 +343,7 @@ for _, strategy in helpers.each_strategy() do
         local json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("Duplicate API key found", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
     end)
 
@@ -366,6 +405,7 @@ for _, strategy in helpers.each_strategy() do
             local json = cjson.decode(body)
             assert.not_nil(json)
             assert.matches("Invalid authentication credentials", json.message)
+            assert.equal('Key', res.headers["WWW-Authenticate"])
           end)
 
           -- lua-multipart doesn't currently handle duplicates at all.
@@ -387,6 +427,7 @@ for _, strategy in helpers.each_strategy() do
               local json = cjson.decode(body)
               assert.not_nil(json)
               assert.matches("Duplicate API key found", json.message)
+              assert.equal('Key', res.headers["WWW-Authenticate"])
             end)
           end
 
@@ -403,6 +444,7 @@ for _, strategy in helpers.each_strategy() do
               local json = cjson.decode(body)
               assert.not_nil(json)
               assert.matches("Duplicate API key found", json.message)
+              assert.equal('Key', res.headers["WWW-Authenticate"])
             end)
 
             it("does not identify apikey[] as api keys", function()
@@ -417,6 +459,7 @@ for _, strategy in helpers.each_strategy() do
               local json = cjson.decode(body)
               assert.not_nil(json)
               assert.matches("No API key found in request", json.message)
+              assert.equal('Key', res.headers["WWW-Authenticate"])
             end)
 
             it("does not identify apikey[1] as api keys", function()
@@ -431,6 +474,7 @@ for _, strategy in helpers.each_strategy() do
               local json = cjson.decode(body)
               assert.not_nil(json)
               assert.matches("No API key found in request", json.message)
+              assert.equal('Key', res.headers["WWW-Authenticate"])
             end)
           end
         end)
@@ -462,6 +506,7 @@ for _, strategy in helpers.each_strategy() do
         local json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("Invalid authentication credentials", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
     end)
 
@@ -522,6 +567,7 @@ for _, strategy in helpers.each_strategy() do
         local json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("Invalid authentication credentials", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
 
         res = assert(proxy_client:send {
           method  = "GET",
@@ -535,6 +581,7 @@ for _, strategy in helpers.each_strategy() do
         json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("Invalid authentication credentials", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
     end)
 
@@ -665,6 +712,7 @@ for _, strategy in helpers.each_strategy() do
         local json = cjson.decode(body)
         assert.not_nil(json)
         assert.matches("No API key found in request", json.message)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
     end)
 
@@ -844,6 +892,7 @@ for _, strategy in helpers.each_strategy() do
           }
         })
         assert.response(res).has.status(401)
+        assert.equal('Basic realm="' .. meta._NAME .. '"', res.headers["WWW-Authenticate"])
       end)
 
       it("fails 401, with only the second credential provided", function()
@@ -856,6 +905,7 @@ for _, strategy in helpers.each_strategy() do
           }
         })
         assert.response(res).has.status(401)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
 
       it("fails 401, with no credential provided", function()
@@ -867,6 +917,7 @@ for _, strategy in helpers.each_strategy() do
           }
         })
         assert.response(res).has.status(401)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
 
     end)
@@ -1280,6 +1331,9 @@ for _, strategy in helpers.each_strategy() do
           },
         })
         assert.res_status(test[5], res)
+        if test[5] == 401 then
+          assert.equal('Key', res.headers["WWW-Authenticate"])
+        end
         proxy_client:close()
       end)
     end

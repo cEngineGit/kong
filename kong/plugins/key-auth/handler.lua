@@ -7,6 +7,7 @@ local type = type
 local error = error
 local ipairs = ipairs
 local tostring = tostring
+local fmt = string.format
 
 
 local HEADERS_CONSUMER_ID           = constants.HEADERS.CONSUMER_ID
@@ -25,14 +26,11 @@ local KeyAuthHandler = {
 local EMPTY = {}
 
 
-local _realm = 'Key realm="' .. _KONG._NAME .. '"'
-
-
-local ERR_DUPLICATE_API_KEY   = { status = 401, message = "Duplicate API key found" }
-local ERR_NO_API_KEY          = { status = 401, message = "No API key found in request" }
-local ERR_INVALID_AUTH_CRED   = { status = 401, message = "Invalid authentication credentials" }
-local ERR_INVALID_PLUGIN_CONF = { status = 500, message = "Invalid plugin configuration" }
-local ERR_UNEXPECTED          = { status = 500, message = "An unexpected error occurred" }
+local ERR_DUPLICATE_API_KEY   = "Duplicate API key found"
+local ERR_NO_API_KEY          = "No API key found in request"
+local ERR_INVALID_AUTH_CRED   = "Invalid authentication credentials"
+local ERR_INVALID_PLUGIN_CONF = "Invalid plugin configuration"
+local ERR_UNEXPECTED          = "An unexpected error occurred"
 
 
 local function load_credential(key)
@@ -99,13 +97,21 @@ local function get_body()
   return body
 end
 
+local function server_error(message)
+  return { status = 500, message = message }
+end
+
+local function unauthorized(message, www_auth_content)
+  return { status = 401, message = message, headers = { ["WWW-Authenticate"] = www_auth_content } }
+end
 
 local function do_authentication(conf)
   if type(conf.key_names) ~= "table" then
     kong.log.err("no conf.key_names set, aborting plugin execution")
-    return nil, ERR_INVALID_PLUGIN_CONF
+    return nil, server_error(ERR_INVALID_PLUGIN_CONF)
   end
 
+  local www_auth_content = conf.realm and fmt('Key realm="%s"', conf.realm) or 'Key'
   local headers = kong.request.get_headers()
   local query = kong.request.get_query()
   local key
@@ -160,14 +166,13 @@ local function do_authentication(conf)
 
     elseif type(v) == "table" then
       -- duplicate API key
-      return nil, ERR_DUPLICATE_API_KEY
+      return nil, unauthorized(ERR_DUPLICATE_API_KEY, www_auth_content)
     end
   end
 
   -- this request is missing an API key, HTTP 401
   if not key or key == "" then
-    kong.response.set_header("WWW-Authenticate", _realm)
-    return nil, ERR_NO_API_KEY
+    return nil, unauthorized(ERR_NO_API_KEY, www_auth_content)
   end
 
   -- retrieve our consumer linked to this API key
@@ -188,7 +193,7 @@ local function do_authentication(conf)
   -- no credential in DB, for this key, it is invalid, HTTP 401
   if not credential or hit_level == 4 then
 
-    return nil, ERR_INVALID_AUTH_CRED
+    return nil, unauthorized(ERR_INVALID_AUTH_CRED, www_auth_content)
   end
 
   -----------------------------------------
@@ -203,7 +208,7 @@ local function do_authentication(conf)
                                  credential.consumer.id)
   if err then
     kong.log.err(err)
-    return nil, ERR_UNEXPECTED
+    return nil, server_error(ERR_UNEXPECTED)
   end
 
   set_consumer(consumer, credential)
