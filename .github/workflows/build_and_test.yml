@@ -107,6 +107,8 @@ jobs:
 
     - name: Download runtimes file
       uses: Kong/gh-storage/download@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.PAT }}
       with:
         repo-path: Kong/gateway-action-storage/main/.ci/runtimes.json
 
@@ -206,7 +208,6 @@ jobs:
           docker logs kong_redis
 
     - name: Run OpenTelemetry Collector
-      if: ${{ matrix.suite == 'plugins' }}
       run: |
           mkdir -p ${{ github.workspace }}/tmp/otel
           touch ${{ github.workspace }}/tmp/otel/file_exporter.json
