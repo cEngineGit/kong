@@ -5,7 +5,7 @@ local lower = string.lower
 local ngx_timer_pending_count = ngx.timer.pending_count
 local ngx_timer_running_count = ngx.timer.running_count
 local balancer = require("kong.runloop.balancer")
-local yield = require("kong.tools.utils").yield
+local yield = require("kong.tools.yield").yield
 local get_all_upstreams = balancer.get_all_upstreams
 if not balancer.get_all_upstreams then -- API changed since after Kong 2.5
   get_all_upstreams = require("kong.runloop.balancer.upstreams").get_all_upstreams
@@ -227,17 +227,16 @@ local function log(message, serialized)
     return
   end
 
-  local service_name
+  local service_name = ""
   if message and message.service then
     service_name = message.service.name or message.service.host
-  else
-    -- do not record any stats if the service is not present
-    return
   end
 
   local route_name
   if message and message.route then
     route_name = message.route.name or message.route.id
+  else
+    return
   end
 
   local consumer = ""
@@ -368,7 +367,7 @@ local function metric_data(write_fn)
     for key, upstream_id in pairs(upstreams_dict) do
       -- long loop maybe spike proxy request latency, so we
       -- need yield to avoid blocking other requests
-      -- kong.tools.utils.yield(true)
+      -- kong.tools.yield.yield(true)
       yield(true, phase)
       local _, upstream_name = key:match("^([^:]*):(.-)$")
       upstream_name = upstream_name and upstream_name or key

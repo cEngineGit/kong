@@ -57,11 +57,6 @@
   - libc.so.6
   Rpath     : /usr/local/kong/lib
 
-- Path      : /usr/local/lib/lua/5.1/cjson.so
-  Needed    :
-  - libc.so.6
-  Runpath   : /usr/local/kong/lib
-
 - Path      : /usr/local/lib/lua/5.1/lfs.so
   Needed    :
   - libc.so.6
@@ -175,6 +170,7 @@
   - lua-resty-events
   - lua-resty-lmdb
   - ngx_wasm_module
-  OpenSSL   : OpenSSL 3.1.2 1 Aug 2023
+  OpenSSL   : OpenSSL 3.2.0 23 Nov 2023
   DWARF     : True
   DWARF - ngx_http_request_t related DWARF DIEs: True
+

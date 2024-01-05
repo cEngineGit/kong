@@ -21,7 +21,7 @@ jobs:
 
       - name: Find changelog files
         id: changelog-list
-        uses: tj-actions/changed-files@95690f9ece77c1740f4a55b7f1de9023ed6b1f87 # v37
+        uses: tj-actions/changed-files@716b1e13042866565e00e85fd4ec490e186c4a2f # 41.0.1
         with:
           files_yaml: |
             changelogs:
@@ -33,7 +33,7 @@ jobs:
 
       - name: Check changelog existence
         if: steps.changelog-list.outputs.changelogs_any_changed == 'false'
-        run: >
+        run: |
           echo "Changelog file expected but found none. If you believe this PR requires no changelog entry, label it with \"skip-changelog\"."
           echo "Refer to https://github.com/Kong/gateway-changelog for format guidelines."
           exit 1
@@ -56,7 +56,7 @@ jobs:
           exit 1
 
       - name: Fail when deprecated YAML keys are used
-        run: >
+        run: |
           for file in ${{ steps.changelog-list.outputs.changelogs_all_changed_files }}; do
             if grep -q "prs:" $file || grep -q "jiras:" $file; then
               echo "Please do not include \"prs\" or \"jiras\" keys in new changelogs, put the JIRA number inside commit message and PR description instead."
