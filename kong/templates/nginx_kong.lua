@@ -81,7 +81,8 @@ server {
     listen $(entry.listener);
 > end
 
-    error_page 400 404 405 408 411 412 413 414 417 494 /kong_error_handler;
+    error_page 400 404 405 408 411 412 413 414 417 /kong_error_handler;
+    error_page 494 =494                            /kong_error_handler;
     error_page 500 502 503 504                     /kong_error_handler;
 
     # Append the kong request id to the error log
@@ -89,7 +90,11 @@ server {
     lua_kong_error_log_request_id $kong_request_id;
 
 > if proxy_access_log_enabled then
+>   if custom_proxy_access_log then
+    access_log ${{PROXY_ACCESS_LOG}};
+>   else
     access_log ${{PROXY_ACCESS_LOG}} kong_log_format;
+>   end
 > else
     access_log off;
 > end
@@ -157,6 +162,11 @@ server {
         proxy_buffering          on;
         proxy_request_buffering  on;
 
+        # injected nginx_location_* directives
+> for _, el in ipairs(nginx_location_directives) do
+        $(el.name) $(el.value);
+> end
+
         proxy_set_header      TE                 $upstream_te;
         proxy_set_header      Host               $upstream_host;
         proxy_set_header      Upgrade            $upstream_upgrade;
@@ -168,6 +178,9 @@ server {
         proxy_set_header      X-Forwarded-Path   $upstream_x_forwarded_path;
         proxy_set_header      X-Forwarded-Prefix $upstream_x_forwarded_prefix;
         proxy_set_header      X-Real-IP          $remote_addr;
+> if enabled_headers_upstream["X-Kong-Request-Id"] then
+        proxy_set_header      X-Kong-Request-Id  $kong_request_id;
+> end
         proxy_pass_header     Server;
         proxy_pass_header     Date;
         proxy_ssl_name        $upstream_host;
@@ -199,6 +212,9 @@ server {
         proxy_set_header      X-Forwarded-Path   $upstream_x_forwarded_path;
         proxy_set_header      X-Forwarded-Prefix $upstream_x_forwarded_prefix;
         proxy_set_header      X-Real-IP          $remote_addr;
+> if enabled_headers_upstream["X-Kong-Request-Id"] then
+        proxy_set_header      X-Kong-Request-Id  $kong_request_id;
+> end
         proxy_pass_header     Server;
         proxy_pass_header     Date;
         proxy_ssl_name        $upstream_host;
@@ -230,6 +246,9 @@ server {
         proxy_set_header      X-Forwarded-Path   $upstream_x_forwarded_path;
         proxy_set_header      X-Forwarded-Prefix $upstream_x_forwarded_prefix;
         proxy_set_header      X-Real-IP          $remote_addr;
+> if enabled_headers_upstream["X-Kong-Request-Id"] then
+        proxy_set_header      X-Kong-Request-Id  $kong_request_id;
+> end
         proxy_pass_header     Server;
         proxy_pass_header     Date;
         proxy_ssl_name        $upstream_host;
@@ -261,6 +280,9 @@ server {
         proxy_set_header      X-Forwarded-Path   $upstream_x_forwarded_path;
         proxy_set_header      X-Forwarded-Prefix $upstream_x_forwarded_prefix;
         proxy_set_header      X-Real-IP          $remote_addr;
+> if enabled_headers_upstream["X-Kong-Request-Id"] then
+        proxy_set_header      X-Kong-Request-Id  $kong_request_id;
+> end
         proxy_pass_header     Server;
         proxy_pass_header     Date;
         proxy_ssl_name        $upstream_host;
@@ -285,6 +307,9 @@ server {
         grpc_set_header      X-Forwarded-Path   $upstream_x_forwarded_path;
         grpc_set_header      X-Forwarded-Prefix $upstream_x_forwarded_prefix;
         grpc_set_header      X-Real-IP          $remote_addr;
+> if enabled_headers_upstream["X-Kong-Request-Id"] then
+        grpc_set_header      X-Kong-Request-Id  $kong_request_id;
+> end
         grpc_pass_header     Server;
         grpc_pass_header     Date;
         grpc_ssl_name        $upstream_host;
@@ -328,6 +353,9 @@ server {
         proxy_set_header      X-Forwarded-Path   $upstream_x_forwarded_path;
         proxy_set_header      X-Forwarded-Prefix $upstream_x_forwarded_prefix;
         proxy_set_header      X-Real-IP          $remote_addr;
+> if enabled_headers_upstream["X-Kong-Request-Id"] then
+        proxy_set_header      X-Kong-Request-Id  $kong_request_id;
+> end
         proxy_pass_header     Server;
         proxy_pass_header     Date;
         proxy_ssl_name        $upstream_host;
@@ -435,7 +463,7 @@ server {
 }
 > end
 
-> if (role == "control_plane" or role == "traditional") and #admin_listen > 0 and #admin_gui_listeners > 0 then
+> if (role == "control_plane" or role == "traditional") and #admin_listeners > 0 and #admin_gui_listeners > 0 then
 server {
     server_name kong_gui;
 > for i = 1, #admin_gui_listeners do
@@ -478,7 +506,7 @@ server {
 
     include nginx-kong-gui-include.conf;
 }
-> end -- of the (role == "control_plane" or role == "traditional") and #admin_listen > 0 and #admin_gui_listeners > 0
+> end -- of the (role == "control_plane" or role == "traditional") and #admin_listeners > 0 and #admin_gui_listeners > 0
 
 > if role == "control_plane" then
 server {

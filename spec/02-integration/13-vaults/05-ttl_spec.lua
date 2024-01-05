@@ -64,7 +64,7 @@ local VAULTS = {
     },
 
     create_secret = function(self, _, value)
-      -- Currently, crate_secret is called _before_ starting Kong.
+      -- Currently, create_secret is called _before_ starting Kong.
       --
       -- This means our backend won't be available yet because it is
       -- piggy-backing on Kong as an HTTP mock fixture.
