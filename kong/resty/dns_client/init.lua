@@ -7,7 +7,7 @@ local utils = require("dns_client/utils")  -- TODO:
 local math_min = math.min
 local table_insert = table.insert
 local table_remove = table.remove
-local json = require("cjson").encode
+--local json = require("cjson").encode
 
 
 -- Constants and default values
@@ -108,7 +108,7 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
         qname = qname:sub(1, -2)
     end
 
-    local others = {}    -- table contains other <key, answers> pairs
+    local others = {}    -- table contains other <key, unmatched answers> pairs
 
     for i = #answers, 1, -1 do
         local answer = answers[i]
@@ -130,7 +130,7 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
         answers.errstr = client_errors[101]
     end
 
-    -- insert others into cache
+    -- TODO: insert answers in others into cache
 end
 
 
@@ -139,16 +139,14 @@ local function process_answers(self, qname, qtype, answers)
         process_answers_remove_unmatched(qname, qtype, answers)
     end
 
-    local ttl
     local errcode = answers.errcode
     if errcode == 3 or errcode == 101 then
-        ttl = self.not_found_ttl
+        answers.ttl = self.not_found_ttl
     elseif errcode then
-        ttl = self.error_ttl
+        answers.ttl = self.error_ttl
     else
-        ttl = self.valid_ttl or answers_min_ttl(answers)
+        answers.ttl = self.valid_ttl or answers_min_ttl(answers)
     end
-    answers.ttl = ttl
 end
 
 
@@ -173,7 +171,6 @@ local function query(self, name, opts, tries)
     end
 
     process_answers(self, name, opts.qtype, answers)
-    assert(answers)
 
     return answers, nil, answers.ttl
 end
@@ -195,7 +192,7 @@ local function resolve_name_type_callback(self, name, opts, tries)
 
         if ttl > 0 then
             table_insert(tries, "stale")
-            opts = opts -- deep copy
+            opts = opts -- TODO: deep copy
             timer_at(0, query_task, self, opts)
             return answers, nil, ttl
         end
@@ -222,8 +219,10 @@ function _M:resolve_name_type(name, opts, tries)
                                                    resolve_name_type_callback,
                                                    self, name, opts, tries)
     if hit_level and hit_level < 3 then
-        table_insert(tries, "hit-" .. hit_level)
+        table_insert(tries, "hit/L" .. hit_level)   -- "hit/L1" or "hit/L2"
     end
+
+    -- TODO: dereference CNAME & SRV
 
     assert(answers or err)
 
@@ -232,7 +231,8 @@ end
 
 
 local function resolve_names_and_types(self, name, opts, tries)
-    --print("resolve_names_and_types")
+
+    --TODO: construct <names, types> from opts.search/ndots/domain
     local names = { name }
     local types = self.types
     local answers, err
@@ -291,14 +291,18 @@ function _M:resolve(name, opts, tries)
     opts = opts or {}
     tries = tries or {}
 
+    -- TODO: handle opts.cache_only
+
     local answers, err, hit_level = self.cache:get(name, nil,
                                                    resolve_callback,
                                                    self, name, opts, tries)
     if hit_level and hit_level < 3 then
-        table_insert(tries, "hit-" .. hit_level)
+        table_insert(tries, "hit/L" .. hit_level)   -- "hit/L1" or "hit/L2"
     end
 
     assert(answers or err)
+
+    -- TODO: handle opts.return_random
 
     return answers, err, tries
 end
