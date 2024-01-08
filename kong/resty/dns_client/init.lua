@@ -108,10 +108,19 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
         qname = qname:sub(1, -2)
     end
 
+    local others = {}    -- table contains other <key, answers> pairs
+
     for i = #answers, 1, -1 do
         local answer = answers[i]
 
         if answer.name ~= qname or answer.type ~= qtype then
+            -- insert to others
+            local key = answers.name .. ":" .. answers.type
+            if not others[key] then
+                others[key] = {}
+            end
+            table_insert(others[key], 1, answer)
+            -- remove from answers
             table_remove(answers, i)
         end
     end
@@ -120,6 +129,8 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
         answers.errcode = 101
         answers.errstr = client_errors[101]
     end
+
+    -- insert others into cache
 end
 
 
@@ -142,15 +153,14 @@ end
 
 
 local function query(self, name, opts, tries)
-    table_insert(tries, ":query")
-    --table_insert(tries, ":query" .. json(r_opts))
+    table_insert(tries, "query")
 
     local r, err = resolver:new(self.r_opts)
     if not r then
         return nil, "failed to instantiate the resolver: " .. err
     end
 
-    local answers, err = r:query(name, opts, tries)
+    local answers, err, q_tries = r:query(name, opts, {})
     assert(answers or err)
 
     if r.destroy then
@@ -158,6 +168,7 @@ local function query(self, name, opts, tries)
     end
 
     if not answers then
+        table_insert(tries, q_tries)
         return nil, "DNS server error:" .. (err or "unknown")
     end
 
@@ -176,9 +187,6 @@ end
 
 
 local function resolve_name_type_callback(self, name, opts, tries)
-    --print("+ r cb")
-    table_insert(tries, ":rcb")
-
     local key = name .. ":" .. opts.qtype
     local ttl, err, answers, went_stale = self.cache:peek(key, true)
 
@@ -186,7 +194,7 @@ local function resolve_name_type_callback(self, name, opts, tries)
         ttl = (ttl or 0) + self.stale_ttl
 
         if ttl > 0 then
-            table_insert(tries, ":stale")
+            table_insert(tries, "stale")
             opts = opts -- deep copy
             timer_at(0, query_task, self, opts)
             return answers, nil, ttl
@@ -198,9 +206,7 @@ end
 
 
 function _M:resolve_name_type(name, opts, tries)
-    --print("r:", name, ":",opts)
     tries = tries or {}
-
     if #tries > 50 then
         error("recursion detected")
     end
@@ -210,10 +216,14 @@ function _M:resolve_name_type(name, opts, tries)
     end
 
     local key = name .. ":" .. opts.qtype
+    table_insert(tries, key)
+
     local answers, err, hit_level = self.cache:get(key, nil,
                                                    resolve_name_type_callback,
                                                    self, name, opts, tries)
-    table_insert(tries, name .. ":hit-" .. tostring(hit_level))
+    if hit_level and hit_level < 3 then
+        table_insert(tries, "hit-" .. hit_level)
+    end
 
     assert(answers or err)
 
@@ -245,14 +255,12 @@ end
 
 
 local function resolve_callback(self, name, opts, tries)
-    table_insert(tries, ":racb")
-
     local ttl, err, value, went_stale = self.cache:peek(name, true)
     if value and went_stale then
         ttl = (ttl or 0) + self.stale_ttl
 
         if ttl > 0 then
-            table_insert(tries, ":stale")
+            table_insert(tries, "stale")
 
             timer_at(0, function (premature)
                 if premature then return end
@@ -286,7 +294,9 @@ function _M:resolve(name, opts, tries)
     local answers, err, hit_level = self.cache:get(name, nil,
                                                    resolve_callback,
                                                    self, name, opts, tries)
-    table_insert(tries, name .. ":hit-" .. tostring(hit_level))
+    if hit_level and hit_level < 3 then
+        table_insert(tries, "hit-" .. hit_level)
+    end
 
     assert(answers or err)
 
