@@ -7,7 +7,7 @@ local utils = require("dns_client/utils")  -- TODO:
 local math_min = math.min
 local table_insert = table.insert
 local table_remove = table.remove
---local json = require("cjson").encode
+local json = require("cjson").encode
 
 
 -- Constants and default values
@@ -115,7 +115,7 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
 
         if answer.name ~= qname or answer.type ~= qtype then
             -- insert to others
-            local key = answers.name .. ":" .. answers.type
+            local key = answer.name .. ":" .. answer.type
             if not others[key] then
                 others[key] = {}
             end
@@ -131,6 +131,7 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
     end
 
     -- TODO: insert answers in others into cache
+    return true
 end
 
 
@@ -171,6 +172,7 @@ local function query(self, name, opts, tries)
     end
 
     process_answers(self, name, opts.qtype, answers)
+    table_insert(tries, answers.errstr or #answers)
 
     return answers, nil, answers.ttl
 end
@@ -204,13 +206,6 @@ end
 
 function _M:resolve_name_type(name, opts, tries)
     tries = tries or {}
-    if #tries > 50 then
-        error("recursion detected")
-    end
-
-    if not opts.qtype then
-        opts.qtype = resolver.TYPE_A
-    end
 
     local key = name .. ":" .. opts.qtype
     table_insert(tries, key)
@@ -218,11 +213,13 @@ function _M:resolve_name_type(name, opts, tries)
     local answers, err, hit_level = self.cache:get(key, nil,
                                                    resolve_name_type_callback,
                                                    self, name, opts, tries)
+    if err and string.sub(err, 1, #"callback") == "callback" then
+        ngx.log(ngx.ALERT, err)
+    end
+
     if hit_level and hit_level < 3 then
         table_insert(tries, "hit/L" .. hit_level)   -- "hit/L1" or "hit/L2"
     end
-
-    -- TODO: dereference CNAME & SRV
 
     assert(answers or err)
 
@@ -281,26 +278,39 @@ end
 --           and `domain`
 --   `type`: SRV, A, AAAA
 function _M:resolve(name, opts, tries)
-
-    --[[
-    if name:sub(-1) == "." then
-        name = name:sub(1, -2)
-    end
-    ]]
-
     opts = opts or {}
     tries = tries or {}
+
+    -- detect recursion
+    for _, v in ipairs(tries) do
+        if v == name then
+            return nil, "recursion detected"
+        end
+    end
+
+    table_insert(tries, name)
 
     -- TODO: handle opts.cache_only
 
     local answers, err, hit_level = self.cache:get(name, nil,
                                                    resolve_callback,
                                                    self, name, opts, tries)
+    if err and string.sub(err, 1, #"callback") == "callback" then
+        ngx.log(ngx.ALERT, err)
+    end
+
     if hit_level and hit_level < 3 then
         table_insert(tries, "hit/L" .. hit_level)   -- "hit/L1" or "hit/L2"
     end
 
     assert(answers or err)
+
+    -- dereference CNAME
+    if answers and not answers.errcode and answers[1].type == resolver.TYPE_CNAME then
+        table_insert(tries, "cname")
+        opts.qtype = nil
+        return self:resolve(answers[1].cname, opts, tries)
+    end
 
     -- TODO: handle opts.return_random
 
