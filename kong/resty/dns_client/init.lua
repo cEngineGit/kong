@@ -5,6 +5,7 @@ local resolver = require("resty.dns.resolver")
 local utils = require("dns_client/utils")  -- TODO:
 
 local math_min = math.min
+local math_random = math.random
 local table_insert = table.insert
 local table_remove = table.remove
 local json = require("cjson").encode
@@ -193,25 +194,31 @@ local function query(self, name, opts, tries)
 end
 
 
-local function query_task(premature, self, opts)
-    if not premature then
-        query(self, name, opts)
-    end
+local function start_stale_update_task(self, name, opts)
+    opts = opts -- TODO: deep copy
+    opts.cache_only = false
+    opts.no_stale = true
+
+    timer_at(0, function (premature)
+        if not premature then
+            resolve_name_type(self, name, opts, {})
+        end
+    end)
 end
 
 
 local function resolve_name_type_callback(self, name, opts, tries)
     local key = name .. ":" .. opts.qtype
-    local ttl, err, answers, went_stale = self.cache:peek(key, true)
 
-    if answers and went_stale then
-        ttl = (ttl or 0) + self.stale_ttl
-
-        if ttl > 0 then
-            log(tries, "stale")
-            opts = opts -- TODO: deep copy
-            timer_at(0, query_task, self, opts)
-            return answers, nil, ttl
+    if not opts.no_stale then
+        local ttl, err, answers, stale = self.cache:peek(key, true)
+        if answers and stale then
+            ttl = (ttl or 0) + self.stale_ttl
+            if ttl > 0 then
+                log(tries, "stale")
+                start_stale_update_task(self, name, opts)
+                return answers, nil, ttl
+            end
         end
     end
 
@@ -233,16 +240,13 @@ local function detect_recursion(opts, key)
 end
 
 
-function _M:resolve_name_type(name, opts, tries)
-    opts = opts or {}
-    tries = tries or {}
-
+local function resolve_name_type(self, name, opts, tries)
     local key = name .. ":" .. opts.qtype
+    log(tries, key)
+
     if detect_recursion(opts, key) then
         return nil, "recursion detected for name: " .. name
     end
-
-    log(tries, key)
 
     local answers, err, hit_level = self.cache:get(key, nil,
                                                    resolve_name_type_callback,
@@ -271,8 +275,8 @@ local function resolve_names_and_types(self, name, opts, tries)
     for _, qname in ipairs(names) do
         for _, qtype in ipairs(types) do
             opts.qtype = qtype
-            answers, err, tries = self:resolve_name_type(qname, opts, tries)
-            if answers and not answers.errcode and #answers > 0 then
+            answers, err, tries = resolve_name_type(self, qname, opts, tries)
+            if answers and not answers.errcode then
                 return answers, nil, tries
             end
         end
@@ -319,13 +323,13 @@ end
 --   `return_random`: default `false`, return only one random IP addreas
 --   `cache_only`: default `false`, retrieve data only from the internal cache
 function _M:resolve(name, opts, tries)
-    opts = opts or {}
+    opts = opts or {}   -- TODO: deep copy
     tries = tries or {}
 
     local answers, err, tries = resolve_all(self, name, opts, tries)
 
     if opts.return_random and answers and not answers.errcode then
-        return answers[math_random(1, #answers)]
+        return answers[math_random(1, #answers)], nil, tries
     end
 
     return answers, err, tries
