@@ -25,6 +25,11 @@ local DEFAULT_TYPES = {         -- default order to query
     resolver.TYPE_CNAME,
 }
 
+local hit_level_strings = {
+    [1] = "hit/lru",
+    [2] = "hit/shdict",
+}
+
 local client_errors = {     -- client specific errors
     [100] = "cache only lookup failed",
     [101] = "empty record received",
@@ -33,6 +38,7 @@ local client_errors = {     -- client specific errors
 }
 
 
+--- APIs
 local _M = {}
 local mt = { __index = _M }
 
@@ -103,23 +109,23 @@ local function answers_min_ttl(answers)
 end
 
 
-local function process_answers_remove_unmatched(qname, qtype, answers)
+local function filter_unmatched_answers(qname, qtype, answers)
     if qname:sub(-1) == "." then
         qname = qname:sub(1, -2)
     end
 
-    local others = {}    -- table contains other <key, unmatched answers> pairs
+    local unmatched = {}    -- table contains unmatched <key, answers>
 
     for i = #answers, 1, -1 do
         local answer = answers[i]
 
         if answer.name ~= qname or answer.type ~= qtype then
-            -- insert to others
+            -- insert to unmatched
             local key = answer.name .. ":" .. answer.type
-            if not others[key] then
-                others[key] = {}
+            if not unmatched[key] then
+                unmatched[key] = {}
             end
-            table_insert(others[key], 1, answer)
+            table_insert(unmatched[key], 1, answer)
             -- remove from answers
             table_remove(answers, i)
         end
@@ -130,16 +136,11 @@ local function process_answers_remove_unmatched(qname, qtype, answers)
         answers.errstr = client_errors[101]
     end
 
-    -- TODO: insert answers in others into cache
-    return true
+    return unmatched
 end
 
 
-local function process_answers(self, qname, qtype, answers)
-    if not answers.errcode then
-        process_answers_remove_unmatched(qname, qtype, answers)
-    end
-
+local function process_answers_ttl(self, answers)
     local errcode = answers.errcode
     if errcode == 3 or errcode == 101 then
         answers.ttl = self.not_found_ttl
@@ -148,6 +149,19 @@ local function process_answers(self, qname, qtype, answers)
     else
         answers.ttl = self.valid_ttl or answers_min_ttl(answers)
     end
+end
+
+
+-- NOTE: it might insert unmatched answers into cache
+local function process_answers(self, qname, qtype, answers)
+    if not answers.errcode then
+        local unmatched = filter_unmatched_answers(qname, qtype, answers)
+        for k, a in pairs(unmatched) do
+            process_answers_ttl(self, a)
+            self.cache:set(k, { ttl = a.ttl }, a)
+        end
+    end
+    process_answers_ttl(self, answers)
 end
 
 
@@ -200,14 +214,33 @@ local function resolve_name_type_callback(self, name, opts, tries)
         end
     end
 
+    if opts.cache_only then
+        return { errcode = 100, errstr = client_errors[100] }, nil, -1
+    end
+
     return query(self, name, opts, tries)
 end
 
 
+local function detect_recursion(opts, key)
+    if not opts.resolved_names then
+        opts.resolved_names = {}
+    end
+    local detected = opts.resolved_names[key]
+    opts.resolved_names[key] = true
+    return detected
+end
+
+
 function _M:resolve_name_type(name, opts, tries)
+    opts = opts or {}
     tries = tries or {}
 
     local key = name .. ":" .. opts.qtype
+    if detect_recursion(opts, key) then
+        return nil, "recursion detected for name: " .. name
+    end
+
     table_insert(tries, key)
 
     local answers, err, hit_level = self.cache:get(key, nil,
@@ -218,7 +251,7 @@ function _M:resolve_name_type(name, opts, tries)
     end
 
     if hit_level and hit_level < 3 then
-        table_insert(tries, "hit/L" .. hit_level)   -- "hit/L1" or "hit/L2"
+        table_insert(tries, hit_level_strings[hit_level])
     end
 
     assert(answers or err)
@@ -272,6 +305,7 @@ local function resolve_callback(self, name, opts, tries)
 end
 
 
+
 -- resolve all combinations of `name`s and `type`s, and return first usable
 -- answers
 --   `name`: produced by @name and the options in resolv.conf: `search`, `ndots`
@@ -281,11 +315,8 @@ function _M:resolve(name, opts, tries)
     opts = opts or {}
     tries = tries or {}
 
-    -- detect recursion
-    for _, v in ipairs(tries) do
-        if v == name then
-            return nil, "recursion detected"
-        end
+    if detect_recursion(opts, name) then
+        return nil, "recursion detected for name: " .. name
     end
 
     table_insert(tries, name)
@@ -295,12 +326,13 @@ function _M:resolve(name, opts, tries)
     local answers, err, hit_level = self.cache:get(name, nil,
                                                    resolve_callback,
                                                    self, name, opts, tries)
+
     if err and string.sub(err, 1, #"callback") == "callback" then
         ngx.log(ngx.ALERT, err)
     end
 
     if hit_level and hit_level < 3 then
-        table_insert(tries, "hit/L" .. hit_level)   -- "hit/L1" or "hit/L2"
+        table_insert(tries, hit_level_strings[hit_level])
     end
 
     assert(answers or err)
