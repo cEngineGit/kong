@@ -194,14 +194,13 @@ local function query(self, name, opts, tries)
 end
 
 
-local function start_stale_update_task(self, name, opts)
-    opts = opts -- TODO: deep copy
-    opts.cache_only = false
-    opts.no_stale = true
-
+local function start_stale_update_task(self, key, name, opts)
     timer_at(0, function (premature)
         if not premature then
-            resolve_name_type(self, name, opts, {})
+            local answer = query(self, name, opts, {})
+            if answers and not answers.errcode then
+                self.cache:set(key, { ttl = answers.ttl }, answers)
+            end
         end
     end)
 end
@@ -210,15 +209,16 @@ end
 local function resolve_name_type_callback(self, name, opts, tries)
     local key = name .. ":" .. opts.qtype
 
-    if not opts.no_stale then
-        local ttl, err, answers, stale = self.cache:peek(key, true)
-        if answers and stale then
-            ttl = (ttl or 0) + self.stale_ttl
-            if ttl > 0 then
-                log(tries, "stale")
-                start_stale_update_task(self, name, opts)
-                return answers, nil, ttl
+    local ttl, err, answers, stale = self.cache:peek(key, true)
+    if answers and stale then
+        ttl = (ttl or 0) + self.stale_ttl
+        if ttl > 0 then
+            log(tries, "stale")
+            if not answers.stale then     -- first-time use, update it
+                start_stale_update_task(self, key, name, opts)  -- TODO: deepcopy opts
+                answers.stale = true
             end
+            return answers, nil, ttl
         end
     end
 
