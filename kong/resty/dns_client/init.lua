@@ -9,6 +9,7 @@ local table_insert = table.insert
 local table_remove = table.remove
 local json = require("cjson").encode
 
+local log = table_insert
 
 -- Constants and default values
 local DEFAULT_HOSTS_FILE = "/etc/hosts"
@@ -25,7 +26,7 @@ local DEFAULT_TYPES = {         -- default order to query
     resolver.TYPE_CNAME,
 }
 
-local hit_level_strings = {
+local hitstrs = {
     [1] = "hit/lru",
     [2] = "hit/shdict",
 }
@@ -36,6 +37,7 @@ local client_errors = {     -- client specific errors
     [102] = "invalid name, bad IPv4",
     [103] = "invalid name, bad IPv6",
 }
+
 
 
 --- APIs
@@ -88,12 +90,10 @@ function _M.new(opts)
     return setmetatable({
         r_opts = r_opts,
         cache = cache,
-        cache_only = opts.cache_only or false,
         valid_ttl = opts.valid_ttl,
         error_ttl = opts.error_ttl or DEFAULT_ERROR_TTL,
         stale_ttl = opts.stale_ttl or DEFAULT_STALE_TTL,
         not_found_ttl = opts.not_found_ttl or DEFAULT_NOT_FOUND_TTL,
-        return_random = opts.return_random or true,
         enable_ipv6 = enable_ipv6,
         types = DEFAULT_TYPES,
     }, mt)
@@ -131,11 +131,6 @@ local function filter_unmatched_answers(qname, qtype, answers)
         end
     end
 
-    if #answers == 0 then
-        answers.errcode = 101
-        answers.errstr = client_errors[101]
-    end
-
     return unmatched
 end
 
@@ -161,12 +156,18 @@ local function process_answers(self, qname, qtype, answers)
             self.cache:set(k, { ttl = a.ttl }, a)
         end
     end
+
+    if #answers == 0 then
+        answers.errcode = 101
+        answers.errstr = client_errors[101]
+    end
+
     process_answers_ttl(self, answers)
 end
 
 
 local function query(self, name, opts, tries)
-    table_insert(tries, "query")
+    log(tries, "query")
 
     local r, err = resolver:new(self.r_opts)
     if not r then
@@ -181,12 +182,12 @@ local function query(self, name, opts, tries)
     end
 
     if not answers then
-        table_insert(tries, q_tries)
+        log(tries, q_tries)
         return nil, "DNS server error:" .. (err or "unknown")
     end
 
     process_answers(self, name, opts.qtype, answers)
-    table_insert(tries, answers.errstr or #answers)
+    log(tries, answers.errstr or #answers)
 
     return answers, nil, answers.ttl
 end
@@ -207,7 +208,7 @@ local function resolve_name_type_callback(self, name, opts, tries)
         ttl = (ttl or 0) + self.stale_ttl
 
         if ttl > 0 then
-            table_insert(tries, "stale")
+            log(tries, "stale")
             opts = opts -- TODO: deep copy
             timer_at(0, query_task, self, opts)
             return answers, nil, ttl
@@ -241,7 +242,7 @@ function _M:resolve_name_type(name, opts, tries)
         return nil, "recursion detected for name: " .. name
     end
 
-    table_insert(tries, key)
+    log(tries, key)
 
     local answers, err, hit_level = self.cache:get(key, nil,
                                                    resolve_name_type_callback,
@@ -251,7 +252,7 @@ function _M:resolve_name_type(name, opts, tries)
     end
 
     if hit_level and hit_level < 3 then
-        table_insert(tries, hit_level_strings[hit_level])
+        log(tries, hitstrs[hit_level])
     end
 
     assert(answers or err)
@@ -270,81 +271,62 @@ local function resolve_names_and_types(self, name, opts, tries)
     for _, qname in ipairs(names) do
         for _, qtype in ipairs(types) do
             opts.qtype = qtype
-            --print("+ r:", qname, ":", opts)
             answers, err, tries = self:resolve_name_type(qname, opts, tries)
-            --print("+r -> ", json(nil), " :err ", err)
-            if answers and #answers > 0 then
+            if answers and not answers.errcode and #answers > 0 then
                 return answers, nil, tries
             end
         end
     end
 
-    --print(" not found:", json(answers), " :err:", err)
     return answers, err, tries
 end
 
 
-local function resolve_callback(self, name, opts, tries)
-    local ttl, err, value, went_stale = self.cache:peek(name, true)
-    if value and went_stale then
-        ttl = (ttl or 0) + self.stale_ttl
-
-        if ttl > 0 then
-            table_insert(tries, "stale")
-
-            timer_at(0, function (premature)
-                if premature then return end
-                query(name, self.r_opts)
-            end)
-
-            return value, nil, ttl
-        end
-    end
-
-    return resolve_names_and_types(self, name, opts, tries)
-end
-
-
-
--- resolve all combinations of `name`s and `type`s, and return first usable
--- answers
---   `name`: produced by @name and the options in resolv.conf: `search`, `ndots`
---           and `domain`
---   `type`: SRV, A, AAAA
-function _M:resolve(name, opts, tries)
-    opts = opts or {}
-    tries = tries or {}
-
+local function resolve_all(self, name, opts, tries)
     if detect_recursion(opts, name) then
         return nil, "recursion detected for name: " .. name
     end
 
-    table_insert(tries, name)
+    log(tries, name)
 
-    -- TODO: handle opts.cache_only
+    -- lookup fastly: no callback, which is only used for real network query
+    local answers, err, hit_level = self.cache:get(name)
 
-    local answers, err, hit_level = self.cache:get(name, nil,
-                                                   resolve_callback,
-                                                   self, name, opts, tries)
-
-    if err and string.sub(err, 1, #"callback") == "callback" then
-        ngx.log(ngx.ALERT, err)
+    if not answers then
+        answers, err, tries = resolve_names_and_types(self, name, opts, tries)
+        if answers then
+            self.cache:set(name, { ttl = answers.ttl }, answers)
+        end
+    else
+        log(tries, hitstrs[hit_level])
     end
-
-    if hit_level and hit_level < 3 then
-        table_insert(tries, hit_level_strings[hit_level])
-    end
-
-    assert(answers or err)
 
     -- dereference CNAME
     if answers and not answers.errcode and answers[1].type == resolver.TYPE_CNAME then
-        table_insert(tries, "cname")
-        opts.qtype = nil
-        return self:resolve(answers[1].cname, opts, tries)
+        log(tries, "cname")
+        return resolve_all(self, answers[1].cname, opts, tries)
     end
 
-    -- TODO: handle opts.return_random
+    return answers, err, tries
+end
+
+
+-- resolve all `name`s and `type`s combinations and return first usable answers
+--   `name`s: produced by resolv.conf options: `search`, `ndots` and `domain`
+--   `type`s: SRV, A, AAAA, CNAME
+--
+-- @opts:
+--   `return_random`: default `false`, return only one random IP addreas
+--   `cache_only`: default `false`, retrieve data only from the internal cache
+function _M:resolve(name, opts, tries)
+    opts = opts or {}
+    tries = tries or {}
+
+    local answers, err, tries = resolve_all(self, name, opts, tries)
+
+    if opts.return_random and answers and not answers.errcode then
+        return answers[math_random(1, #answers)]
+    end
 
     return answers, err, tries
 end
