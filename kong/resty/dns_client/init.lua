@@ -334,13 +334,35 @@ end
 --   `return_random`: default `false`, return only one random IP addreas
 --   `cache_only`: default `false`, retrieve data only from the internal cache
 function _M:resolve(name, opts, tries)
-    local answers, err, tries = resolve_all(self, name, opts or {}, tries or {})
+    local opts = opts or {}
+    local tries = treis or {}
+    local answers, err, tries = resolve_all(self, name, opts, tries)
 
     if opts.return_random and answers then
+        if answers[1].type == resolver.TYPE_SRV then
+            local answer = answers[math_random(1, #answers)]
+            return self:resolve(answer.target, opts, tries)
+        end
+
         return answers[math_random(1, #answers)], nil, tries
     end
 
     return answers, err, tries
+end
+
+
+-- compatible with original DNS client library
+local dns_client
+
+function _M.init(opts)
+    dns_client = _M.new(opts)
+end
+
+
+function _M.toip(name, port, cache_only, tries)
+    local opts = { cache_only = cache_only, return_random = true }
+    local answer, err, tries = dns_client:resolve(name, opts, tries)
+    -- TODO
 end
 
 
