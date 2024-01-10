@@ -6,7 +6,10 @@ local DEFAULT_HOSTS_FILE = "/etc/hosts"
 local DEFAULT_RESOLV_CONF = "/etc/resolv.conf"
 
 
-local function parse_hosts(path, enable_ipv6)
+local _M = {}
+
+-- TODO
+function _M.parse_hosts(path, enable_ipv6)
     path = path or DEFAULT_HOSTS_FILE
     return {
         path = path,
@@ -14,7 +17,8 @@ local function parse_hosts(path, enable_ipv6)
 end
 
 
-local function parse_resolv_conf(path, enable_ipv6)
+-- TODO
+function _M.parse_resolv_conf(path, enable_ipv6)
     path = path or DEFAULT_RESOLV_CONF
     return {
         options = {},
@@ -23,15 +27,15 @@ local function parse_resolv_conf(path, enable_ipv6)
 end
 
 
-local function is_fqdn(name, ndots)
+function _M.is_fqdn(name, ndots)
     local _, dot_count = name:gsub("%.", "")
     return (dot_count >= ndots) or (name:sub(-1) == ".")
 end
 
 
 -- construct <names, types> from resolv options: search/ndots and domain
-local function search_names(name, resolv)
-    if not resolv.ndots or is_fqdn(name, resolv.ndots) then
+function _M.search_names(name, resolv)
+    if not resolv.ndots or _M.is_fqdn(name, resolv.ndots) then
         return { name }
     end
 
@@ -43,8 +47,12 @@ local function search_names(name, resolv)
 end
 
 
-return {
-  parse_hosts = parse_hosts,
-  parse_resolv_conf = parse_resolv_conf,
-  search_names = search_names,
-}
+function _M.ipv6_bracket(name)
+    if name:match("^[^[].*:") then  -- not rigorous, but sufficient
+        name = "[" .. name .. "]"
+    end
+    return name
+end
+
+
+return _M

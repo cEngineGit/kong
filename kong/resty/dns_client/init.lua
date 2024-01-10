@@ -100,15 +100,6 @@ function _M.new(opts)
 end
 
 
-local function answers_min_ttl(answers)
-    local ttl = answers[1].ttl
-    for i = 2, #answers do
-        ttl = math_min(ttl, answers[i].ttl)
-    end
-    return ttl
-end
-
-
 local function filter_unmatched_answers(qname, qtype, answers)
     if qname:sub(-1) == "." then
         qname = qname:sub(1, -2)
@@ -135,14 +126,29 @@ local function filter_unmatched_answers(qname, qtype, answers)
 end
 
 
-local function process_answers_ttl(self, answers)
+local function process_answers_fields(self, answers)
     local errcode = answers.errcode
-    if errcode == 3 or errcode == 101 then
+    if not errcode then
+        local ttl = answers[1].ttl
+
+        for _, answer in ipairs(answers) do
+            -- A compromise regarding https://github.com/Kong/kong/pull/3088
+            if answer.type == resolver.TYPE_AAAA then
+                answer.address = utils.ipv6_bracket(answer.address)
+            elseif answer.type == resolver.TYPE_SRV then
+                answer.target = utils.ipv6_brakcet(answer.target)
+            end
+
+            ttl = math_min(ttl, answer.ttl)
+        end
+
+        answers.ttl = self.valid_ttl or ttl
+
+    elseif errcode == 3 or errcode == 101 then
         answers.ttl = self.empty_ttl
-    elseif errcode then
-        answers.ttl = self.error_ttl
+
     else
-        answers.ttl = self.valid_ttl or answers_min_ttl(answers)
+        answers.ttl = self.error_ttl
     end
 end
 
@@ -152,7 +158,7 @@ local function process_answers(self, qname, qtype, answers)
     if not answers.errcode then
         local unmatched = filter_unmatched_answers(qname, qtype, answers)
         for k, a in pairs(unmatched) do
-            process_answers_ttl(self, a)
+            process_answers_fields(self, a)
             self.cache:set(k, { ttl = a.ttl }, a)
         end
     end
@@ -162,7 +168,7 @@ local function process_answers(self, qname, qtype, answers)
         answers.errstr = client_errors[101]
     end
 
-    process_answers_ttl(self, answers)
+    process_answers_fields(self, answers)
 end
 
 
