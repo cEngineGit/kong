@@ -18,7 +18,7 @@ local DEFAULT_RESOLV_CONF = "/etc/resolv.conf"
 
 local DEFAULT_ERROR_TTL = 1     -- unit: second
 local DEFAULT_STALE_TTL = 4
-local DEFAULT_NOT_FOUND_TTL = 30
+local DEFAULT_EMPTY_TTL = 30
 
 local DEFAULT_TYPES = {         -- default order to query
     resolver.TYPE_SRV,
@@ -94,7 +94,7 @@ function _M.new(opts)
         valid_ttl = opts.valid_ttl,
         error_ttl = opts.error_ttl or DEFAULT_ERROR_TTL,
         stale_ttl = opts.stale_ttl or DEFAULT_STALE_TTL,
-        not_found_ttl = opts.not_found_ttl or DEFAULT_NOT_FOUND_TTL,
+        empty_ttl = opts.empty_ttl or DEFAULT_EMPTY_TTL,
         enable_ipv6 = enable_ipv6,
         types = DEFAULT_TYPES,
     }, mt)
@@ -139,7 +139,7 @@ end
 local function process_answers_ttl(self, answers)
     local errcode = answers.errcode
     if errcode == 3 or errcode == 101 then
-        answers.ttl = self.not_found_ttl
+        answers.ttl = self.empty_ttl
     elseif errcode then
         answers.ttl = self.error_ttl
     else
