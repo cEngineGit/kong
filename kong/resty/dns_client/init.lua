@@ -161,11 +161,11 @@ local function process_answers(self, qname, qtype, answers)
             process_answers_fields(self, a)
             self.cache:set(k, { ttl = a.ttl }, a)
         end
-    end
 
-    if #answers == 0 then
-        answers.errcode = 101
-        answers.errstr = client_errors[101]
+        if #answers == 0 then
+            answers.errcode = 101
+            answers.errstr = client_errors[101]
+        end
     end
 
     process_answers_fields(self, answers)
@@ -278,10 +278,19 @@ local function resolve_names_and_types(self, name, opts, tries)
     for _, qtype in ipairs(types) do
         for _, qname in ipairs(names) do
             answers, err, tries = resolve_name_type(self, qname, qtype, opts, tries)
-            if answers and not answers.errcode then
+            if not answers then
+                break
+            end
+            if not answers.errcode then
                 return answers, nil, tries
             end
         end
+    end
+
+    -- ensure the returned non-nil answers are always usable
+    if answers and answers.errcode then
+        err = ("records error: %s %s"):format(answers.errcode, answers.errstr)
+        answers = nil
     end
 
     return answers, err, tries
@@ -308,7 +317,7 @@ local function resolve_all(self, name, opts, tries)
     end
 
     -- dereference CNAME
-    if answers and not answers.errcode and answers[1].type == resolver.TYPE_CNAME then
+    if answers and answers[1].type == resolver.TYPE_CNAME then
         log(tries, "cname")
         return resolve_all(self, answers[1].cname, opts, tries)
     end
@@ -327,7 +336,7 @@ end
 function _M:resolve(name, opts, tries)
     local answers, err, tries = resolve_all(self, name, opts or {}, tries or {})
 
-    if opts.return_random and answers and not answers.errcode then
+    if opts.return_random and answers then
         return answers[math_random(1, #answers)], nil, tries
     end
 
