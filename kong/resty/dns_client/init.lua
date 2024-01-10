@@ -2,20 +2,20 @@
 
 local mlcache = require("resty.mlcache")
 local resolver = require("resty.dns.resolver")
-local utils = require("dns_client/utils")  -- TODO:
+local utils = require("dns_client/utils")  -- TODO
 
 local math_min = math.min
 local math_random = math.random
 local table_insert = table.insert
 local table_remove = table.remove
+local deep_copy = function (t) return t end -- TODO require("kong.tools.utils").deep_copy
+
+-- debug
 local json = require("cjson").encode
 
 local log = table_insert
 
 -- Constants and default values
-local DEFAULT_HOSTS_FILE = "/etc/hosts"
-local DEFAULT_RESOLV_CONF = "/etc/resolv.conf"
-
 local DEFAULT_ERROR_TTL = 1     -- unit: second
 local DEFAULT_STALE_TTL = 4
 local DEFAULT_EMPTY_TTL = 30
@@ -40,7 +40,6 @@ local client_errors = {     -- client specific errors
 }
 
 
-
 --- APIs
 local _M = {}
 local mt = { __index = _M }
@@ -54,11 +53,9 @@ function _M.new(opts)
     local enable_ipv6 = opts.enable_ipv6 or true
 
     -- parse hosts and resolv.conf
-    local hosts_file = opts.hosts or DEFAULT_HOSTS_FILE
-    local resolv_conf = opts.resolv_conf or DEFAULT_RESOLV_CONF
 
-    local hosts = utils.parse_hosts(hosts_file, enable_ipv6)
-    local resolv = utils.parse_resolv_conf(resolv_conf, enable_ipv6)
+    local hosts = utils.parse_hosts(opts.hosts, enable_ipv6)
+    local resolv = utils.parse_resolv_conf(opts.resolv_conf, enable_ipv6)
 
 	-- init the resolver options for lua-resty-dns
     local nameservers = opts.nameservers or resolv.nameservers
@@ -95,6 +92,8 @@ function _M.new(opts)
         error_ttl = opts.error_ttl or DEFAULT_ERROR_TTL,
         stale_ttl = opts.stale_ttl or DEFAULT_STALE_TTL,
         empty_ttl = opts.empty_ttl or DEFAULT_EMPTY_TTL,
+        hosts = opts._hosts or hosts,
+        resolv = opts._resolv or resolv,
         enable_ipv6 = enable_ipv6,
         types = DEFAULT_TYPES,
     }, mt)
@@ -167,7 +166,7 @@ local function process_answers(self, qname, qtype, answers)
 end
 
 
-local function query(self, name, opts, tries)
+local function query(self, name, qtype, tries)
     log(tries, "query")
 
     local r, err = resolver:new(self.r_opts)
@@ -175,29 +174,29 @@ local function query(self, name, opts, tries)
         return nil, "failed to instantiate the resolver: " .. err
     end
 
-    local answers, err, q_tries = r:query(name, opts, {})
-    assert(answers or err)
-
+    local options = { additional_section = true, qtype = qtype }
+    local answers, err, q_tries = r:query(name, options, {})
     if r.destroy then
         r:destroy()
     end
+    assert(answers or err)
 
     if not answers then
         log(tries, q_tries)
         return nil, "DNS server error:" .. (err or "unknown")
     end
 
-    process_answers(self, name, opts.qtype, answers)
+    process_answers(self, name, qtype, answers)
     log(tries, answers.errstr or #answers)
 
     return answers, nil, answers.ttl
 end
 
 
-local function start_stale_update_task(self, key, name, opts)
+local function start_stale_update_task(self, key, name, qtype)
     timer_at(0, function (premature)
         if not premature then
-            local answer = query(self, name, opts, {})
+            local answer = query(self, name, qtype, {})
             if answers and not answers.errcode then
                 self.cache:set(key, { ttl = answers.ttl }, answers)
             end
@@ -206,8 +205,8 @@ local function start_stale_update_task(self, key, name, opts)
 end
 
 
-local function resolve_name_type_callback(self, name, opts, tries)
-    local key = name .. ":" .. opts.qtype
+local function resolve_name_type_callback(self, name, qtype, opts, tries)
+    local key = name .. ":" .. qtype
 
     local ttl, err, answers, stale = self.cache:peek(key, true)
     if answers and stale then
@@ -215,7 +214,7 @@ local function resolve_name_type_callback(self, name, opts, tries)
         if ttl > 0 then
             log(tries, "stale")
             if not answers.stale then     -- first-time use, update it
-                start_stale_update_task(self, key, name, opts)  -- TODO: deepcopy opts
+                start_stale_update_task(self, key, name, qtype)
                 answers.stale = true
             end
             return answers, nil, ttl
@@ -226,7 +225,7 @@ local function resolve_name_type_callback(self, name, opts, tries)
         return { errcode = 100, errstr = client_errors[100] }, nil, -1
     end
 
-    return query(self, name, opts, tries)
+    return query(self, name, qtype, tries)
 end
 
 
@@ -240,8 +239,8 @@ local function detect_recursion(opts, key)
 end
 
 
-local function resolve_name_type(self, name, opts, tries)
-    local key = name .. ":" .. opts.qtype
+local function resolve_name_type(self, name, qtype, opts, tries)
+    local key = name .. ":" .. qtype
     log(tries, key)
 
     if detect_recursion(opts, key) then
@@ -249,8 +248,8 @@ local function resolve_name_type(self, name, opts, tries)
     end
 
     local answers, err, hit_level = self.cache:get(key, nil,
-                                                   resolve_name_type_callback,
-                                                   self, name, opts, tries)
+                                                resolve_name_type_callback,
+                                                self, name, qtype, opts, tries)
     if err and string.sub(err, 1, #"callback") == "callback" then
         ngx.log(ngx.ALERT, err)
     end
@@ -266,16 +265,13 @@ end
 
 
 local function resolve_names_and_types(self, name, opts, tries)
-
-    --TODO: construct <names, types> from opts.search/ndots/domain
-    local names = { name }
     local types = self.types
-    local answers, err
+    local names = utils.search_names(name, self.resolv)
+    local answers, err, qname
 
-    for _, qname in ipairs(names) do
-        for _, qtype in ipairs(types) do
-            opts.qtype = qtype
-            answers, err, tries = resolve_name_type(self, qname, opts, tries)
+    for _, qtype in ipairs(types) do
+        for _, qname in ipairs(names) do
+            answers, err, tries = resolve_name_type(self, qname, qtype, opts, tries)
             if answers and not answers.errcode then
                 return answers, nil, tries
             end
@@ -323,10 +319,7 @@ end
 --   `return_random`: default `false`, return only one random IP addreas
 --   `cache_only`: default `false`, retrieve data only from the internal cache
 function _M:resolve(name, opts, tries)
-    opts = opts or {}   -- TODO: deep copy
-    tries = tries or {}
-
-    local answers, err, tries = resolve_all(self, name, opts, tries)
+    local answers, err, tries = resolve_all(self, name, opts or {}, tries or {})
 
     if opts.return_random and answers and not answers.errcode then
         return answers[math_random(1, #answers)], nil, tries
