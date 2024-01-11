@@ -37,6 +37,8 @@ local plugins = {
   "zipkin",
   "opentelemetry",
   "ai-proxy",
+  "ai-request-transformer",
+  "ai-response-transformer",
 }
 
 local plugin_map = {}
