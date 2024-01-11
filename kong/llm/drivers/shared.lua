@@ -209,6 +209,8 @@ function _M.post_request(conf, response_string)
       return nil, "failed to decode response from JSON"
     end
 
+    kong.log.inspect("ANALYTICS FROM ", conf.model.provider, " -> ", response_object.usage)
+
     -- this captures the openai-format usage stats from the transformed response body
     if response_object.usage then
       if response_object.usage.prompt_tokens then
