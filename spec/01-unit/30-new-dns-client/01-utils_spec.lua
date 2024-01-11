@@ -90,7 +90,6 @@ describe("[utils]", function ()
       local names = utils.search_names("www1.www2.www3", resolv)
       assert.same(names, { "www1.www2.www3" })  -- not apply
     end)
-
   end)
 
 end)

@@ -331,27 +331,29 @@ end
 --   `type`s: SRV, A, AAAA, CNAME
 --
 -- @opts:
---   `return_random`: default `false`, return only one random IP addreas
+--   `return_random`: default `false`, return only one random IP address
 --   `cache_only`: default `false`, retrieve data only from the internal cache
 function _M:resolve(name, opts, tries)
     local opts = opts or {}
     local tries = treis or {}
     local answers, err, tries = resolve_all(self, name, opts, tries)
-
-    if opts.return_random and answers then
-        if answers[1].type == resolver.TYPE_SRV then
-            local answer = answers[math_random(1, #answers)]
-            return self:resolve(answer.target, opts, tries)
-        end
-
-        return answers[math_random(1, #answers)], nil, tries
+    if not answers or not opts.return_random then
+        return answers, err, tries
     end
 
-    return answers, err, tries
+    -- option: return_random
+    if answers[1].type == resolver.TYPE_SRV then
+        local answer = utils.get_rrw_ans(answers)
+        opts.port = (answer.port ~= 0 and answer.port) or opts.port
+        return self:resolve(answer.target, opts, tries)
+    end
+
+    return utils.get_rr_ans(answers).address, opts.port, tries
 end
 
 
 -- compatible with original DNS client library
+-- These APIs will be deprecated if fully replacing original DNS client library.
 local dns_client
 
 function _M.init(opts)
@@ -360,9 +362,8 @@ end
 
 
 function _M.toip(name, port, cache_only, tries)
-    local opts = { cache_only = cache_only, return_random = true }
-    local answer, err, tries = dns_client:resolve(name, opts, tries)
-    -- TODO
+    local opts = { cache_only = cache_only, return_random = true , port = port }
+    return dns_client:resolve(name, opts, tries)
 end
 
 
