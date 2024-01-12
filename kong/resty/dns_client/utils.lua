@@ -40,7 +40,7 @@ function _M.is_fqdn(name, ndots)
 end
 
 
--- construct <names, types> from resolv options: search/ndots and domain
+-- construct names from resolv options: search, ndots and domain
 function _M.search_names(name, resolv)
     if not resolv.search or _M.is_fqdn(name, resolv.ndots) then
         return { name }

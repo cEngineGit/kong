@@ -306,7 +306,6 @@ local function resolve_all(self, name, opts, tries)
 
     -- lookup fastly: no callback, which is only used for real network query
     local answers, err, hit_level = self.cache:get(name)
-
     if not answers then
         answers, err, tries = resolve_names_and_types(self, name, opts, tries)
         if answers then
@@ -343,8 +342,8 @@ function _M:resolve(name, opts, tries)
 
     -- option: return_random
     if answers[1].type == resolver.TYPE_SRV then
-        local answer = utils.get_rrw_ans(answers)
-        opts.port = (answer.port ~= 0 and answer.port) or opts.port
+        local answer = utils.get_wrr_ans(answers)
+        opts.port = answer.port ~= 0 and answer.port or opts.port
         return self:resolve(answer.target, opts, tries)
     end
 
