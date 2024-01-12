@@ -65,14 +65,68 @@ end
 -- util APIs to balance @answers
 
 function _M.get_rr_ans(answers)
-  answers.last = (answers.last or 0) % #answers + 1
-  return answers[answers.last]
+    answers.last = (answers.last or 0) % #answers + 1
+    return answers[answers.last]
 end
 
 
--- TODO
-function _M.get_rrw_ans(answers)
-  return 1
+-- based on the Nginx's SWRR algorithm
+local function swrr_init(answers)
+    for _, answer in ipairs(answers) do
+        answer.cw = 0   -- current weight
+    end
+end
+
+
+local function swrr_next(answers)
+    local total = 0
+    local best = nil    -- best answer in answers[]
+
+    for _, answer in ipairs(answers) do
+        local weight = answer.weight
+        answer.cw = answer.cw + weight
+        if not best or answer.cw > best.cw then
+            best = answer
+        end
+        total = total + weight
+    end
+
+    best.cw = best.cw - total
+
+    return best
+end
+
+
+-- gather all records with the lowest priority into one array (answers.l)
+-- and return it
+local function filter_lowest_priority_answers(answers)
+    local lowest_priority = answers[1].priority
+    local l = {}    -- lowest priority list
+
+    for _, answer in ipairs(answers) do
+        if answer.priority < lowest_priority then
+            lowest_priority = answer.priority
+            l = { answer }
+        elseif answer.priority == lowest_priority then
+            table.insert(l, answer)
+        end
+    end
+
+    answer.l = l
+
+    return l
+end
+
+
+function _M.get_wrr_ans(answers)
+    local l = answers.l or filter_lowest_priority_answers(answers)
+
+    -- perform round robin selection on lowest priority answers @l
+    if not l[1].cw then
+        swrr_init(l)
+    end
+
+    return swrr_next(l)
 end
 
 
