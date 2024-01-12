@@ -3,6 +3,7 @@
 
 local utils = require("kong.resty.dns.utils")
 
+local math_random = math.random
 local table_insert = table.insert
 
 local DEFAULT_HOSTS_FILE = "/etc/hosts"
@@ -70,14 +71,7 @@ function _M.get_rr_ans(answers)
 end
 
 
--- based on the Nginx's SWRR algorithm
-local function swrr_init(answers)
-    for _, answer in ipairs(answers) do
-        answer.cw = 0   -- current weight
-    end
-end
-
-
+-- based on the Nginx's SWRR algorithm and lua-resty-balancer
 local function swrr_next(answers)
     local total = 0
     local best = nil    -- best answer in answers[]
@@ -97,6 +91,17 @@ local function swrr_next(answers)
 end
 
 
+local function swrr_init(answers)
+    for _, answer in ipairs(answers) do
+        answer.cw = 0   -- current weight
+    end
+    -- random start
+    for _ = 1, math_random(#answers) do
+        swrr_next(answers)
+    end
+end
+
+
 -- gather all records with the lowest priority into one array (answers.l)
 -- and return it
 local function filter_lowest_priority_answers(answers)
@@ -112,7 +117,7 @@ local function filter_lowest_priority_answers(answers)
         end
     end
 
-    answer.l = l
+    answers.l = l
     return l
 end
 

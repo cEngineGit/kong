@@ -409,6 +409,7 @@ return function(options)
     local seeded = {}
     local randomseed = math.randomseed
 
+    _G.math.native_randomseed = randomseed
     _G.math.randomseed = function()
       local pid = ngx.worker.pid()
       local id
