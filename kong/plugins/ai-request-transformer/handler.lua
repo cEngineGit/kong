@@ -32,16 +32,16 @@ local function create_http_opts(conf)
 
   if conf.http_proxy_host then -- port WILL be set via schema constraint
     if not http_opts.proxy_opts then http_opts.proxy_opts = {} end
-    proxy_opts.http_proxy = fmt("http://%s:%d", conf.http_proxy_host, conf.http_proxy_port)
+    http_opts.proxy_opts.http_proxy = fmt("http://%s:%d", conf.http_proxy_host, conf.http_proxy_port)
   end
 
   if conf.https_proxy_host then
     if not http_opts.proxy_opts then http_opts.proxy_opts = {} end
-    proxy_opts.https_proxy = fmt("http://%s:%d", conf.https_proxy_host, conf.https_proxy_port)
+    http_opts.proxy_opts.https_proxy = fmt("http://%s:%d", conf.https_proxy_host, conf.https_proxy_port)
   end
   
   http_opts.http_timeout = conf.http_timeout
-  http_opts.ssl_verify = conf.ssl_verify
+  http_opts.https_verify = conf.https_verify or true
 
   return http_opts
 end
@@ -68,9 +68,6 @@ function _M:access(conf)
   )
 
   if err then return bad_request(err) end
-
-  -- only IF ai-response-transformer isn't enabled
-  -- send upstream
   
   -- set the body for later plugins
   kong.service.request.set_raw_body(new_request_body)

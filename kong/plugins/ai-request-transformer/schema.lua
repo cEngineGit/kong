@@ -36,12 +36,19 @@ return {
             required = true,
             default = 60000,
         }},
-        { ssl_verify = {
-            description = "Verify the TLS certificate of the AI upstream service.",
-            type = "boolean",
-            required = true,
-            default = true,
+        { https_verify = {
+          description = "Verify the TLS certificate of the AI upstream service.",
+          type = "boolean",
+          required = true,
+          default = true,
         }},
+
+        -- from forward-proxy
+        { http_proxy_host = typedefs.host },
+        { http_proxy_port = typedefs.port },
+        { https_proxy_host = typedefs.host },
+        { https_proxy_port = typedefs.port },
+
         { llm = llm.config_schema },
       },
     }},

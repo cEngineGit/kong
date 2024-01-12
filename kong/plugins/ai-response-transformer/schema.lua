@@ -33,24 +33,25 @@ return {
             required = true,
             default = false,
         }},
-        { ssl_verify = {
-            description = "Verify the TLS certificate of the AI upstream service.",
-            type = "boolean",
-            required = true,
-            default = true,
-        }},
         { http_timeout = {
             description = "Timeout in milliseconds for the AI upstream service.",
             type = "integer",
             required = true,
             default = 60000,
         }},
-        { ssl_verify = {
+        { https_verify = {
             description = "Verify the TLS certificate of the AI upstream service.",
             type = "boolean",
             required = true,
             default = true,
         }},
+
+        -- from forward-proxy
+        { http_proxy_host = typedefs.host },
+        { http_proxy_port = typedefs.port },
+        { https_proxy_host = typedefs.host },
+        { https_proxy_port = typedefs.port },
+
         { llm = llm.config_schema },
       },
     }},
