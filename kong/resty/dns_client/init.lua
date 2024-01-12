@@ -8,6 +8,7 @@ local math_min = math.min
 local math_random = math.random
 local table_insert = table.insert
 local table_remove = table.remove
+local string_lower = string.lower
 local deep_copy = function (t) return t end -- TODO require("kong.tools.utils").deep_copy
 
 -- debug
@@ -45,16 +46,45 @@ local _M = {}
 local mt = { __index = _M }
 
 
+-- insert hosts into cache
+local function init_hosts(cache, path)
+    local hosts, err = utils.parse_hosts(path)
+    if not hosts then
+        return nil, err
+    end
+
+    local function insert_answer(name, qtype, address)
+        local key = name .. ":" .. qtype
+        local answers = {{
+            name = name,
+            type = qtype,
+            address = address,
+            class = 1,
+            ttl = 0,
+        }}
+        cache:set(name, { ttl = 0 }, answers)
+    end
+
+    for name, address in pairs(hosts) do
+        name = name:lower()
+        if address.ipv4 then
+            insert_answer(name, resolver.TYPE_A, address.ipv4)
+        end
+        if address.ipv6 then
+            insert_answer(name, resolver.TYPE_AAAA, address.ipv6)
+        end
+    end
+
+    return true
+end
+
+
 function _M.new(opts)
     if not opts then
         return nil, "no options table specified"
     end
 
-    local enable_ipv6 = opts.enable_ipv6 or true
-
-    -- parse hosts and resolv.conf
-
-    local hosts = utils.parse_hosts(opts.hosts, enable_ipv6)
+    -- parse resolv.conf
     local resolv = utils.parse_resolv_conf(opts.resolv_conf, enable_ipv6)
 
 	-- init the resolver options for lua-resty-dns
@@ -85,6 +115,12 @@ function _M.new(opts)
         return nil, "could not create mlcache: " .. err
     end
 
+    -- parse hosts
+    local ok, err = init_hosts(cache, opts.hosts)
+    if not ok then
+        return nil, err
+    end
+
     return setmetatable({
         r_opts = r_opts,
         cache = cache,
@@ -92,7 +128,6 @@ function _M.new(opts)
         error_ttl = opts.error_ttl or DEFAULT_ERROR_TTL,
         stale_ttl = opts.stale_ttl or DEFAULT_STALE_TTL,
         empty_ttl = opts.empty_ttl or DEFAULT_EMPTY_TTL,
-        hosts = opts._hosts or hosts,
         resolv = opts._resolv or resolv,
         enable_ipv6 = enable_ipv6,
         types = DEFAULT_TYPES,

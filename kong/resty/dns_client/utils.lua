@@ -18,6 +18,12 @@ function _M.parse_hosts(path, enable_ipv6)
     if not t then
         return nil, l_or_err
     end
+    if not hosts.localhost then
+        hosts.localhost = {
+          ipv4 = "127.0.0.1",
+          ipv6 = "[::1]",
+        }
+    end
     return t
 end
 
