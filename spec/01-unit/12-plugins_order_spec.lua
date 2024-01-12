@@ -72,6 +72,7 @@ describe("Plugins", function()
       "response-ratelimiting",
       "request-transformer",
       "response-transformer",
+      "ai-prompt-guard",
       "ai-proxy",
       "aws-lambda",
       "azure-functions",
