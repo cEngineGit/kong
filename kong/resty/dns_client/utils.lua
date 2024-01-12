@@ -83,16 +83,16 @@ local function swrr_next(answers)
     local best = nil    -- best answer in answers[]
 
     for _, answer in ipairs(answers) do
-        local weight = answer.weight
-        answer.cw = answer.cw + weight
-        if not best or answer.cw > best.cw then
+        local w = answer.weight
+        local cw = answer.cw + w
+        answer.cw = cw
+        if not best or cw > best.cw then
             best = answer
         end
-        total = total + weight
+        total = total + w
     end
 
     best.cw = best.cw - total
-
     return best
 end
 
@@ -113,7 +113,6 @@ local function filter_lowest_priority_answers(answers)
     end
 
     answer.l = l
-
     return l
 end
 
