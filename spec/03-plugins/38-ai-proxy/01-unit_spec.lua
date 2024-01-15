@@ -118,7 +118,7 @@ local FORMATS = {
       options = {
         max_tokens = 512,
         temperature = 0.5,
-        llama2_format = "raw",
+        llama2_format = "ollama",
       },
     },
     ["llm/v1/completions"] = {
@@ -173,6 +173,16 @@ local FORMATS = {
       },
     },
   },
+  -- mistral = {
+  --   ["llm/v1/chat"] = {
+  --     name = "mistral-tiny",
+  --     provider = "mistral",
+  --     options = {
+  --       max_tokens = 512,
+  --       temperature = 0.5,
+  --     },
+  --   },
+  -- },
 }
 
 
