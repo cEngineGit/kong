@@ -111,12 +111,13 @@ jobs:
         repo-path: Kong/gateway-action-storage/main/.ci/runtimes.json
 
     - name: Schedule tests
-      uses: Kong/gateway-test-scheduler/schedule@b91bd7aec42bd13748652929f087be81d1d40843 # v1
+      uses: Kong/gateway-test-scheduler/schedule@5d27a0bf1acc78fab865eafb41d60e0c7625d261 # v2
       with:
         test-suites-file: .ci/test_suites.json
         test-file-runtime-file: .ci/runtimes.json
         output-prefix: test-chunk.
         runner-count: ${{ env.RUNNER_COUNT }}
+        static-mode: ${{ github.run_attempt > 1 }}
 
     - name: Upload schedule files
       uses: actions/upload-artifact@v4
@@ -280,7 +281,7 @@ jobs:
         DD_CIVISIBILITY_AGENTLESS_ENABLED: true
         DD_TRACE_GIT_METADATA_ENABLED: true
         DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
-      uses: Kong/gateway-test-scheduler/runner@b91bd7aec42bd13748652929f087be81d1d40843 # v1
+      uses: Kong/gateway-test-scheduler/runner@5d27a0bf1acc78fab865eafb41d60e0c7625d261 # v2
       with:
         tests-to-run-file: test-chunk.${{ matrix.runner }}.json
         failed-test-files-file: ${{ env.FAILED_TEST_FILES_FILE }}
