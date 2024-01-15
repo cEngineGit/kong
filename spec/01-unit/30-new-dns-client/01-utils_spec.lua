@@ -338,6 +338,66 @@ options ndots:2
       assert.is.same({ ndots = 2 }, resolv.options)
     end)
 
+  describe("parsing 'hosts':", function()
+
+    it("tests parsing when the 'hosts' file does not exist", function()
+      local result, err = utils.parse_hosts("non/existing/file")
+      assert.is.Nil(result)
+      assert.is.string(err)
+    end)
+
+    it("tests parsing when the 'hosts' file is empty", function()
+      local filename = tempfilename()
+      writefile(filename, "")
+      local reverse = utils.parse_hosts(filename)
+      os.remove(filename)
+      assert.is.same({ localhost = { ipv4 = "127.0.0.1", ipv6 = "[::1]" } }, reverse)
+    end)
+
+    it("tests parsing 'hosts'", function()
+        local hostsfile = splitlines(
+[[# The localhost entry should be in every HOSTS file and is used
+# to point back to yourself.
+
+127.0.0.1 localhost
+::1 localhost
+
+# My test server for the website
+
+192.168.1.2 test.computer.com
+192.168.1.3 ftp.COMPUTER.com alias1 alias2
+192.168.1.4 smtp.computer.com alias3 #alias4
+192.168.1.5 smtp.computer.com alias3 #doubles, first one should win
+
+#Blocking known malicious sites
+127.0.0.1  admin.abcsearch.com
+127.0.0.2  www3.abcsearch.com #[Browseraid]
+127.0.0.3  www.abcsearch.com wwwsearch #[Restricted Zone site]
+
+[::1]        alsolocalhost  #support IPv6 in brackets
+]])
+      local reverse = utils.parse_hosts(hostsfile)
+      assert.is.equal("127.0.0.1", reverse.localhost.ipv4)
+      assert.is.equal("[::1]", reverse.localhost.ipv6)
+
+      assert.is.equal("192.168.1.2", reverse["test.computer.com"].ipv4)
+
+      assert.is.equal("192.168.1.3", reverse["ftp.computer.com"].ipv4)
+      assert.is.equal("192.168.1.3", reverse["alias1"].ipv4)
+      assert.is.equal("192.168.1.3", reverse["alias2"].ipv4)
+
+      assert.is.equal("192.168.1.4", reverse["smtp.computer.com"].ipv4)
+      assert.is.equal("192.168.1.4", reverse["alias3"].ipv4)
+
+      assert.is.equal("192.168.1.4", reverse["smtp.computer.com"].ipv4)  -- .1.4; first one wins!
+      assert.is.equal("192.168.1.4", reverse["alias3"].ipv4)   -- .1.4; first one wins!
+
+      assert.is.equal("[::1]", reverse["alsolocalhost"].ipv6)
+    end)
+
+  end)
+
+
   end)
 
 end)

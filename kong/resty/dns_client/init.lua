@@ -1,8 +1,8 @@
 -- vim: ts=4 sts=4 sw=4 et:
 
-local mlcache = require("resty.mlcache")
+local utils = require("kong.resty.dns_client.utils")
+local mlcache = require("kong.resty.mlcache")
 local resolver = require("resty.dns.resolver")
-local utils = require("dns_client/utils")  -- TODO
 
 local math_min = math.min
 local math_random = math.random
@@ -85,7 +85,10 @@ function _M.new(opts)
     end
 
     -- parse resolv.conf
-    local resolv = utils.parse_resolv_conf(opts.resolv_conf, enable_ipv6)
+    local resolv, err = utils.parse_resolv_conf(opts.resolv_conf, enable_ipv6)
+    if not resolv then
+        return nil, err
+    end
 
 	-- init the resolver options for lua-resty-dns
     local nameservers = opts.nameservers or resolv.nameservers

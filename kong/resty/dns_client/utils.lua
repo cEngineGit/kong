@@ -14,8 +14,8 @@ local _M = {}
 
 -- TODO: need to rewrite it instead of calling parseHosts
 function _M.parse_hosts(path, enable_ipv6)
-    local t, l_or_err = utils.parseHosts(path or DEFAULT_HOSTS_FILE)
-    if not t then
+    local hosts, l_or_err = utils.parseHosts(path or DEFAULT_HOSTS_FILE)
+    if not hosts then
         return nil, l_or_err
     end
     if not hosts.localhost then
@@ -24,7 +24,7 @@ function _M.parse_hosts(path, enable_ipv6)
           ipv6 = "[::1]",
         }
     end
-    return t
+    return hosts
 end
 
 
