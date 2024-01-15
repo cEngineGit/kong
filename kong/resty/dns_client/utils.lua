@@ -34,9 +34,23 @@ function _M.parse_resolv_conf(path, enable_ipv6)
     if not resolv then
         return nil, err
     end
+    resolv = utils.applyEnv(resolv)
     resolv.options = resolv.options or {}
     resolv.ndots = resolv.options.ndots or 1
     resolv.search = resolv.search or (resolv.domain and { resolv.domain })
+    -- nameservers
+    if resolv.nameserver then
+        local nameservers = {}
+        for _, address in ipairs(resolv.nameserver) do
+            local ip, port, t = utils.parseHostname(address)
+            if t == "ipv4" or
+                (t == "ipv6" and not ip:find([[%]], nil, true) and enable_ipv6)
+            then
+                table_insert(nameservers, port and { ip, port } or ip)
+            end
+        end
+        resolv.nameservers = nameservers
+    end
     return resolv
 end
 

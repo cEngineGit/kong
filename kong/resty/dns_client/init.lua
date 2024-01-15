@@ -90,7 +90,7 @@ function _M.new(opts)
 	-- init the resolver options for lua-resty-dns
     local nameservers = opts.nameservers or resolv.nameservers
     if not nameservers or #nameservers == 0 then
-        return nil, "no nameservers specified"
+        ngx.log(ngx.WARN, "Invalid configuration, no nameservers specified")
     end
 
     local r_opts = {

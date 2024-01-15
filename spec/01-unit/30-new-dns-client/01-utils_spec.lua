@@ -1,4 +1,7 @@
 local utils = require "kong.resty.dns_client.utils"
+local tempfilename = require("pl.path").tmpname
+local writefile = require("pl.utils").writefile
+local splitlines = require("pl.stringx").splitlines
 
 describe("[utils]", function ()
 
@@ -178,6 +181,163 @@ describe("[utils]", function ()
       assert.same(count, { ["1"] = 100 })
 
     end)
+  end)
+
+  describe("parsing 'resolv.conf':", function()
+
+    -- override os.getenv to insert env variables
+    local old_getenv = os.getenv
+    local envvars  -- whatever is in this table, gets served first
+    before_each(function()
+      envvars = {}
+      os.getenv = function(name)     -- luacheck: ignore
+        return envvars[name] or old_getenv(name)
+      end
+    end)
+
+    after_each(function()
+      os.getenv = old_getenv         -- luacheck: ignore
+      envvars = nil
+    end)
+
+    it("tests parsing when the 'resolv.conf' file does not exist", function()
+      local result, err = utils.parse_resolv_conf("non/existing/file")
+      assert.is.Nil(result)
+      assert.is.string(err)
+    end)
+
+    it("tests parsing when the 'resolv.conf' file is empty", function()
+      local filename = tempfilename()
+      writefile(filename, "")
+      local resolv, err = utils.parse_resolv_conf(filename)
+      os.remove(filename)
+      assert.is.same({ ndots = 1, options = {} }, resolv)
+      assert.is.Nil(err)
+    end)
+
+    it("tests parsing 'resolv.conf' with multiple comment types", function()
+      local file = splitlines(
+[[# this is just a comment line
+# at the top of the file
+
+domain myservice.com
+
+nameserver 198.51.100.0
+nameserver 2001:db8::1 ; and a comment here
+nameserver 198.51.100.0:1234 ; this one has a port number (limited systems support this)
+nameserver 1.2.3.4 ; this one is 4th, so should be ignored
+
+# search is commented out, test below for a mutually exclusive one
+#search domaina.com domainb.com
+
+sortlist list1 list2 #list3 is not part of it
+
+options ndots:2
+options timeout:3
+options attempts:4
+
+options debug
+options rotate ; let's see about a comment here
+options no-check-names
+options inet6
+; here's annother comment
+options ip6-bytestring
+options ip6-dotint
+options no-ip6-dotint
+options edns0
+options single-request
+options single-request-reopen
+options no-tld-query
+options use-vc
+]])
+      local resolv, err = utils.parse_resolv_conf(file)
+      assert.is.Nil(err)
+      assert.is.equal("myservice.com", resolv.domain)
+      assert.is.same({ "198.51.100.0", "2001:db8::1", "198.51.100.0:1234" }, resolv.nameserver)
+      assert.is.same({ "list1", "list2" }, resolv.sortlist)
+      assert.is.same({ ndots = 2, timeout = 3, attempts = 4, debug = true, rotate = true,
+          ["no-check-names"] = true, inet6 = true, ["ip6-bytestring"] = true,
+          ["ip6-dotint"] = nil,  -- overridden by the next one, mutually exclusive
+          ["no-ip6-dotint"] = true, edns0 = true, ["single-request"] = true,
+          ["single-request-reopen"] = true, ["no-tld-query"] = true, ["use-vc"] = true},
+          resolv.options)
+    end)
+
+    it("tests parsing 'resolv.conf' with mutual exclusive domain vs search", function()
+      local file = splitlines(
+[[domain myservice.com
+
+# search is overriding domain above
+search domaina.com domainb.com
+
+]])
+      local resolv, err = utils.parse_resolv_conf(file)
+      assert.is.Nil(err)
+      assert.is.Nil(resolv.domain)
+      assert.is.same({ "domaina.com", "domainb.com" }, resolv.search)
+    end)
+
+    it("tests parsing 'resolv.conf' with max search entries MAXSEARCH", function()
+      local file = splitlines(
+[[
+
+search domain1.com domain2.com domain3.com domain4.com domain5.com domain6.com domain7.com
+
+]])
+      local resolv, err = utils.parse_resolv_conf(file)
+      assert.is.Nil(err)
+      assert.is.Nil(resolv.domain)
+      assert.is.same({
+          "domain1.com",
+          "domain2.com",
+          "domain3.com",
+          "domain4.com",
+          "domain5.com",
+          "domain6.com",
+        }, resolv.search)
+    end)
+
+    it("tests parsing 'resolv.conf' with environment variables", function()
+      local file = splitlines(
+[[# this is just a comment line
+domain myservice.com
+
+nameserver 198.51.100.0
+nameserver 198.51.100.1 ; and a comment here
+
+options ndots:1
+]])
+      envvars.LOCALDOMAIN = "domaina.com domainb.com"
+      envvars.RES_OPTIONS = "ndots:2 debug"
+
+      local resolv, err = utils.parse_resolv_conf(file)
+      assert.is.Nil(err)
+
+
+      assert.is.Nil(resolv.domain)  -- must be nil, mutually exclusive
+      assert.is.same({ "domaina.com", "domainb.com" }, resolv.search)
+
+      assert.is.same({ ndots = 2, debug = true }, resolv.options)
+    end)
+
+    it("tests parsing 'resolv.conf' with non-existing environment variables", function()
+      local file = splitlines(
+[[# this is just a comment line
+domain myservice.com
+
+nameserver 198.51.100.0
+nameserver 198.51.100.1 ; and a comment here
+
+options ndots:2
+]])
+      envvars.LOCALDOMAIN = ""
+      envvars.RES_OPTIONS = ""
+      local resolv, err = utils.parse_resolv_conf(file)
+      assert.is.Nil(err)
+      assert.is.equals("myservice.com", resolv.domain)  -- must be nil, mutually exclusive
+      assert.is.same({ ndots = 2 }, resolv.options)
+    end)
+
   end)
 
 end)
