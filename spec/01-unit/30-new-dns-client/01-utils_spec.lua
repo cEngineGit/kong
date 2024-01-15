@@ -338,6 +338,17 @@ options ndots:2
       assert.is.same({ ndots = 2 }, resolv.options)
     end)
 
+    it("skip ipv6 nameservers with scopes", function()
+      local file = splitlines(
+[[# this is just a comment line
+nameserver [fe80::1%enp0s20f0u1u1]
+]])
+      local resolv, err = utils.parse_resolv_conf(file)
+      assert.is.same({}, resolv.nameservers)
+    end)
+
+  end)
+
   describe("parsing 'hosts':", function()
 
     it("tests parsing when the 'hosts' file does not exist", function()
@@ -394,9 +405,6 @@ options ndots:2
 
       assert.is.equal("[::1]", reverse["alsolocalhost"].ipv6)
     end)
-
-  end)
-
 
   end)
 
