@@ -15,7 +15,7 @@ return {
             description = "Use this prompt to tune the LLM system/assistant message for the incoming "
                        .. "proxy request (from the client), and what you are expecting in return.",
             type = "string",
-            required = false,
+            required = true,
         }},
         { transformation_extract_pattern = {
             description = "Defines the regular expression that must match to indicate a successful AI transformation "
@@ -31,7 +31,7 @@ return {
             default = true,
         }},
         { http_timeout = {
-            description = "Timeout in milliseconds for the AI upstream service.",
+            description =  "Timeout in milliseconds for the AI upstream service.",
             type = "integer",
             required = true,
             default = 60000,
@@ -52,6 +52,21 @@ return {
         { llm = llm.config_schema },
       },
     }},
+    
   },
-  entity_checks = {},
+  entity_checks = {
+    {
+      conditional = {
+        if_field = "config.llm.route_type",
+        if_match = {
+          not_one_of = {
+            "llm/v1/chat",
+          }
+        },
+        then_field = "config.llm.route_type",
+        then_match = { eq = "llm/v1/chat" },
+        then_err = "'config.llm.route_type' must be 'llm/v1/chat' for AI transformer plugins",
+      }
+    },
+  },
 }

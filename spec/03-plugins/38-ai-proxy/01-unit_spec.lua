@@ -209,6 +209,13 @@ describe(PLUGIN_NAME .. ": (unit)", function()
     assert.same("request matches multiple LLM request formats", err)
   end)
 
+  it("double-format message is denied", function()
+    local compatible, err = llm.is_compatible(SAMPLE_DOUBLE_FORMAT, "llm/v1/completions")
+
+    assert.is_falsy(compatible)
+    assert.same("request matches multiple LLM request formats", err)
+  end)
+
   for i, j in pairs(FORMATS) do
 
     describe(i .. " format tests", function()

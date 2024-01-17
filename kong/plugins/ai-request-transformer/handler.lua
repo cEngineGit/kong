@@ -2,15 +2,7 @@ local _M = {}
 
 -- imports
 local kong_meta     = require "kong.meta"
-local cjson         = require("cjson.safe")
-local http          = require("resty.http")
 local fmt           = string.format
-local str_lower     = string.lower
-local str_format    = string.format
-local ngx_print     = ngx.print
-local str_lower     = string.lower
-local str_format    = string.format
-local base64_encode = ngx.encode_base64
 local llm           = require("kong.llm")
 --
 

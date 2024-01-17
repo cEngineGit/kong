@@ -2,15 +2,8 @@ local _M = {}
 
 -- imports
 local kong_meta     = require "kong.meta"
-local cjson         = require("cjson.safe")
 local http          = require("resty.http")
 local fmt           = string.format
-local str_lower     = string.lower
-local str_format    = string.format
-local ngx_print     = ngx.print
-local str_lower     = string.lower
-local str_format    = string.format
-local base64_encode = ngx.encode_base64
 local kong_utils    = require("kong.tools.utils")
 local llm           = require("kong.llm")
 --
@@ -28,61 +21,6 @@ local function internal_server_error(msg)
   return kong.response.exit(500, { error = { message = msg } })
 end
 
-local HOP_BY_HOP_HEADERS = {
-  ["connection"]          = true,
-  ["keep-alive"]          = true,
-  ["proxy-authenticate"]  = true,
-  ["proxy-authorization"] = true,
-  ["te"]                  = true,
-  ["trailers"]            = true,
-  ["transfer-encoding"]   = true,
-  ["upgrade"]             = true,
-  ["content-length"]      = true, -- Not strictly hop-by-hop, but Nginx will deal
-                                  -- with this (may send chunked for example).
-}
-
--- Originally lifted from lua-resty-http (where is is now deprecated,
--- encouraging users to roll their own).
-local function send_proxied_response(response)
-  if not response then
-    log(ERR, "no response provided")
-    return
-  end
-
-  kong.response.set_status(response.status)
-
-  -- Set headers, filtering out hop-by-hop.
-  local cached_headers = {}
-  for k, v in pairs(response.headers) do
-    if not HOP_BY_HOP_HEADERS[str_lower(k)] then
-      cached_headers[k] = v
-    end
-  end
-  kong.response.set_headers(cached_headers)
-
-  local reader = response.body_reader
-
-  repeat
-    local chunk, ok, read_err, print_err
-
-    chunk, read_err = reader()
-    if read_err then
-      log(ERR, read_err)
-    end
-
-    if chunk then
-      ok, print_err = ngx_print(chunk)
-      if not ok then
-        log(ERR, print_err)
-      end
-    end
-
-    if read_err or print_err then
-      break
-    end
-  until not chunk
-end
-
 local function subrequest(httpc, request_body, http_opts)
   httpc:set_timeouts(http_opts.http_timeout or 60000)
 
@@ -90,13 +28,6 @@ local function subrequest(httpc, request_body, http_opts)
   if ngx.var.is_args == "?" or string.sub(ngx.var.request_uri, -1) == "?" then
     ngx.var.upstream_uri = upstream_uri .. "?" .. (ngx.var.args or "")
   end
-
-  local request_url = fmt("%s://%s:%d%s",
-                          ngx.var.upstream_scheme,
-                          ngx.ctx.balancer_data.host,
-                          ngx.ctx.balancer_data.port,
-                          upstream_uri or ""
-                        )
 
   local ok, err = httpc:connect {
     scheme = ngx.var.upstream_scheme,
