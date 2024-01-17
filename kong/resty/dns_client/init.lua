@@ -14,6 +14,7 @@ local deep_copy = function (t) return t end -- TODO require("kong.tools.utils").
 -- debug
 local json = require("cjson").encode
 
+local logerr = function (...) ngx.log(ngx.ERR, "+ debug:", ...) end
 local log = table_insert
 
 -- Constants and default values
@@ -21,11 +22,15 @@ local DEFAULT_ERROR_TTL = 1     -- unit: second
 local DEFAULT_STALE_TTL = 4
 local DEFAULT_EMPTY_TTL = 30
 
-local DEFAULT_TYPES = {         -- default order to query
-    resolver.TYPE_SRV,
-    resolver.TYPE_A,
-    resolver.TYPE_AAAA,
-    resolver.TYPE_CNAME,
+local DEFAULT_ORDER = { "LAST", "SRV", "A", "CNAME" }
+
+local TYPE_LAST = -1
+local valid_types = {
+    SRV = resolver.TYPE_SRV,
+    A = resolver.TYPE_A,
+    AAAA = resolver.TYPE_AAAA,
+    CNAME = resolver.TYPE_CNAME,
+    LAST = TYPE_LAST,
 }
 
 local hitstrs = {
@@ -50,7 +55,16 @@ local mt = { __index = _M }
 local function init_hosts(cache, path)
     local hosts, err = utils.parse_hosts(path)
     if not hosts then
-        return nil, err
+        ngx.log(ngx.WARN, "Invalid hosts file: ", err)
+        hosts = {}
+    end
+
+    if not hosts.localhost then
+        hosts.localhost = {
+          ipv4 = "127.0.0.1",
+          ipv6 = "[::1]",
+        }
+        ngx.log(ngx.WARN, "Insert : ipv4/6")
     end
 
     local function insert_answer(name, qtype, address)
@@ -62,7 +76,7 @@ local function init_hosts(cache, path)
             class = 1,
             ttl = 0,
         }}
-        cache:set(name, { ttl = 0 }, answers)
+        cache:set(key, { ttl = 0 }, answers)
     end
 
     for name, address in pairs(hosts) do
@@ -74,8 +88,6 @@ local function init_hosts(cache, path)
             insert_answer(name, resolver.TYPE_AAAA, address.ipv6)
         end
     end
-
-    return true
 end
 
 
@@ -87,7 +99,8 @@ function _M.new(opts)
     -- parse resolv.conf
     local resolv, err = utils.parse_resolv_conf(opts.resolv_conf, enable_ipv6)
     if not resolv then
-        return nil, err
+        ngx.log(ngx.WARN, "Invalid resolv.conf: ", err)
+        resolv = { options = {} }
     end
 
 	-- init the resolver options for lua-resty-dns
@@ -107,7 +120,7 @@ function _M.new(opts)
     local lock_timeout = r_opts.timeout / 1000 * r_opts.retrans + 1 -- s
 
     local cache, err = mlcache.new("dns_cache", "kong_dns_cache", {
-        lru_size = 1000,
+        lru_size = opts.cache_size or 10000,
         ipc_shm = "kong_dns_cache_ipc",
         resty_lock_opts = {
             timeout = lock_timeout,
@@ -118,10 +131,23 @@ function _M.new(opts)
         return nil, "could not create mlcache: " .. err
     end
 
+    cache:purge(true)
+
     -- parse hosts
-    local ok, err = init_hosts(cache, opts.hosts)
-    if not ok then
-        return nil, err
+    init_hosts(cache, opts.hosts)
+
+    -- parse order
+    local search_types = {}
+    local order = opts.order or DEFAULT_ORDER
+    for _, typstr in ipairs(order) do
+        local qtype = valid_types[typstr:upper()]
+        if not qtype then
+            return nil, "Invalid dns record type in order array: " .. typstr
+        end
+        table_insert(search_types, qtype)
+    end
+    if #search_types == 0 then
+        return nil, "Invalid order array: empty record types"
     end
 
     return setmetatable({
@@ -133,7 +159,7 @@ function _M.new(opts)
         empty_ttl = opts.empty_ttl or DEFAULT_EMPTY_TTL,
         resolv = opts._resolv or resolv,
         enable_ipv6 = enable_ipv6,
-        types = DEFAULT_TYPES,
+        search_types = search_types,
     }, mt)
 end
 
@@ -210,7 +236,7 @@ local function process_answers(self, qname, qtype, answers)
 end
 
 
-local function query(self, name, qtype, tries)
+local function resolve_query(self, name, qtype, tries)
     log(tries, "query")
 
     local r, err = resolver:new(self.r_opts)
@@ -218,6 +244,7 @@ local function query(self, name, qtype, tries)
         return nil, "failed to instantiate the resolver: " .. err
     end
 
+    logerr("q:", name)
     local options = { additional_section = true, qtype = qtype }
     local answers, err, q_tries = r:query(name, options, {})
     if r.destroy then
@@ -240,7 +267,7 @@ end
 local function start_stale_update_task(self, key, name, qtype)
     timer_at(0, function (premature)
         if not premature then
-            local answer = query(self, name, qtype, {})
+            local answer = resolve_query(self, name, qtype, {})
             if answers and not answers.errcode then
                 self.cache:set(key, { ttl = answers.ttl }, answers)
             end
@@ -250,6 +277,7 @@ end
 
 
 local function resolve_name_type_callback(self, name, qtype, opts, tries)
+    logerr("cb:", name, qtype)
     local key = name .. ":" .. qtype
 
     local ttl, err, answers, stale = self.cache:peek(key, true)
@@ -269,16 +297,22 @@ local function resolve_name_type_callback(self, name, qtype, opts, tries)
         return { errcode = 100, errstr = client_errors[100] }, nil, -1
     end
 
-    return query(self, name, qtype, tries)
+    return resolve_query(self, name, qtype, tries)
 end
 
 
 local function detect_recursion(opts, key)
-    if not opts.resolved_names then
-        opts.resolved_names = {}
+    local rn = opts.resolved_names
+    if not rn then
+        rn = {}
+        opts.resolved_names = rn
     end
-    local detected = opts.resolved_names[key]
-    opts.resolved_names[key] = true
+    local detected = rn[key]
+    -- TODO delete
+    if detected then
+        ngx.log(ngx.ALERT, "detect recursion for name:", key)
+    end
+    rn[key] = true
     return detected
 end
 
@@ -304,34 +338,52 @@ local function resolve_name_type(self, name, qtype, opts, tries)
 
     assert(answers or err)
 
-    return answers, err, tries
+    return answers, err
+end
+
+
+local function search_types(self, name)
+    local types = {}
+    local checked_types = {}
+
+    for _, qtype in ipairs(self.search_types) do
+        if qtype == TYPE_LAST then
+            qtype = self.cache:get(name .. ":l")
+        end
+        if qtype and not checked_types[qtype] then
+            table.insert(types, qtype)
+            checked_types[qtype] = true
+        end
+    end
+
+    return types
 end
 
 
 local function resolve_names_and_types(self, name, opts, tries)
-    local types = self.types
+    local types = search_types(self, name)
     local names = utils.search_names(name, self.resolv)
-    local answers, err, qname
+    local answers, err
 
     for _, qtype in ipairs(types) do
         for _, qname in ipairs(names) do
-            answers, err, tries = resolve_name_type(self, qname, qtype, opts, tries)
+            answers, err = resolve_name_type(self, qname, qtype, opts, tries)
+
+            -- severe error occurred
             if not answers then
-                break
+                return nil, err, tries
             end
+
             if not answers.errcode then
+                -- cache the TYPE_LAST
+                self.cache:set(name .. ":l", { ttl = 0 }, qtype)
                 return answers, nil, tries
             end
         end
     end
 
-    -- ensure the returned non-nil answers are always usable
-    if answers and answers.errcode then
-        err = ("records error: %s %s"):format(answers.errcode, answers.errstr)
-        answers = nil
-    end
-
-    return answers, err, tries
+    -- not found in the search iteration
+    return nil, "no available records", tries
 end
 
 
@@ -349,6 +401,7 @@ local function resolve_all(self, name, opts, tries)
         if answers then
             self.cache:set(name, { ttl = answers.ttl }, answers)
         end
+
     else
         log(tries, hitstrs[hit_level])
     end
@@ -372,7 +425,9 @@ end
 --   `cache_only`: default `false`, retrieve data only from the internal cache
 function _M:resolve(name, opts, tries)
     local opts = opts or {}
-    local tries = treis or {}
+    local tries = tries or {}
+    assert(tries and opts)
+    --ngx.log(ngx.ERR, "resolve: ", name, ":", json(opts))
     local answers, err, tries = resolve_all(self, name, opts, tries)
     if not answers or not opts.return_random then
         return answers, err, tries
@@ -394,13 +449,39 @@ end
 local dns_client
 
 function _M.init(opts)
-    dns_client = _M.new(opts)
+    opts.valid_ttl = opts.validTtl
+    opts.error_ttl = opts.badTtl
+    opts.stale_ttl = opts.staleTtl
+    opts.cache_size = opts.cacheSize
+
+    local client, err = _M.new(opts)
+    if not client then
+        return nil, err
+    end
+    dns_client = client
+    return true
+end
+
+
+-- New and old libraries have the same function name.
+_M._resolve = _M.resolve
+
+function _M.resolve(name, r_opts, cache_only, tries)
+    ngx.log(ngx.ERR, "name:", json(name))
+    local opts = { cache_only = cache_only }
+    return dns_client:_resolve(name, opts, tries)
 end
 
 
 function _M.toip(name, port, cache_only, tries)
     local opts = { cache_only = cache_only, return_random = true , port = port }
-    return dns_client:resolve(name, opts, tries)
+    return dns_client:_resolve(name, opts, tries)
+end
+
+if package.loaded.busted then
+    function _M.getcache()
+        return dns_client.cache
+    end
 end
 
 
