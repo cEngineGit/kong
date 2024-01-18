@@ -287,18 +287,17 @@ describe("[DNS client]", function()
           }, list)
       end)
 
-      it("works with a 'search .' option", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "search .",
-              "options ndots:1",
-            }
-          }))
-        local list = {}
-        for qname, qtype in client._search_iter("host.", nil) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+      it("works with a 'search .' option #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "search .",
+          "options ndots:1",
+        })
+
+        local cli = assert(client_new())
+        local answers, err = cli:resolve("host.")
+
         assert.same({
             'host.:33',
             'host.:1',
@@ -307,18 +306,17 @@ describe("[DNS client]", function()
           }, list)
       end)
 
-      it("works with a 'domain' option", function()
-        assert(client.init({
-            resolvConf = {
+      it("works with a 'domain' option #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
               "nameserver 198.51.100.0",
               "domain local.domain.com",
               "options ndots:1",
-            }
-          }))
-        local list = {}
-        for qname, qtype in client._search_iter("host.", nil) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        })
+
+        local cli = assert(client_new())
+        local answers, err = cli:resolve("host.")
+
         assert.same({
           'host.:33',
           'host.:1',
@@ -327,22 +325,18 @@ describe("[DNS client]", function()
         }, list)
       end)
 
-      it("handles last successful type", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "search one.com two.com",
-              "options ndots:1",
-            }
-          }))
-        local lrucache = cli.cache
-        -- insert a last successful type
-        local hostname = "host."
-        lrucache:set(hostname, client.TYPE_CNAME)
-        local list = {}
-        for qname, qtype in client._search_iter(hostname, nil) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+      it("handles last successful type #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "search one.com two.com",
+          "options ndots:1",
+        })
+
+        local cli = assert(client_new())
+        cli:insert_last_type("host.", resolver.TYPE_CNAME)
+
+        local answers, err = cli:resolve("host.")
         assert.same({
             'host.:5',
             'host.:33',
