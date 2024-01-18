@@ -281,7 +281,7 @@ local function resolve_query(self, name, qtype, tries)
 
     if not answers then
         log(tries, q_tries)
-        return nil, "DNS server error:" .. (err or "unknown")
+        return nil, "DNS server error: " .. (err or "unknown")
     end
 
     process_answers(self, name, qtype, answers)

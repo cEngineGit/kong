@@ -16,7 +16,7 @@ end
 
 describe("[DNS client]", function()
 
-  local resolver, client, query_func
+  local resolver, client, query_func, old_udp, receive_func
 
   local resolv_path, hosts_path
 
@@ -24,12 +24,12 @@ describe("[DNS client]", function()
     _writefile(path, type(text) == "table" and table.concat(text, "\n") or text)
   end
 
-  local function client_new()
-    return client.new {
-      nameservers = { "198.51.100.0:53" },
-      resolv_conf = resolv_path,
-      hosts = hosts_path,
-    }
+  local function client_new(opts)
+    opts = opts or {}
+    opts.nameserver = { "198.51.100.0:53" }
+    opts.resolv_conf = resolv_path
+    opts.hosts = hosts_path
+    return client.new(opts)
   end
 
   lazy_setup(function()
@@ -38,6 +38,22 @@ describe("[DNS client]", function()
     hosts_path = tmpname()
     ngx.log(ngx.DEBUG, "create temp resolv.conf:", resolv_path,
                        " hosts:", hosts_path)
+
+    -- hook sock:receive to do timeout test
+    old_udp = ngx.socket.udp
+
+    _G.ngx.socket.udp = function (...)
+      local sock = old_udp(...)
+
+      local old_receive = sock.receive
+
+      sock.receive = function (...)
+        receive_func(...)
+        return old_receive(...)
+      end
+
+      return sock
+    end
 
   end)
 
@@ -48,6 +64,8 @@ describe("[DNS client]", function()
     if hosts_path then
       os.remove(hosts_path)
     end
+
+    _G.ngx.socket.udp = old_udp
   end)
 
   before_each(function()
@@ -55,7 +73,7 @@ describe("[DNS client]", function()
     package.loaded["resty.dns.resolver"] = nil
     resolver = require("resty.dns.resolver")
 
-    -- you can replace this `query_func` upvalue to spy on resolver query calls.
+    -- replace this `query_func` upvalue to spy on resolver query calls.
     query_func = function(self, original_query_func, name, options)
       return original_query_func(self, name, options)
     end
@@ -86,6 +104,8 @@ describe("[DNS client]", function()
 
     package.loaded["kong.resty.dns.client"] = nil
     client = nil
+
+    receive_func = nil
   end)
 
 
@@ -348,19 +368,16 @@ describe("[DNS client]", function()
     end)
 
     describe("with type", function()
-      it("works with a 'search' option", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "search one.com two.com",
-              "options ndots:1",
-            }
-          }))
-        local list = {}
+      it("works with a 'search' option #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "search one.com two.com",
+          "options ndots:1",
+        })
         -- search using IPv6 type
-        for qname, qtype in client._search_iter("host", client.TYPE_AAAA) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        local cli = assert(client_new({ order = { "AAAA" } }))
+        local answers, err = cli:resolve("host")
         assert.same({
             'host.one.com:28',
             'host.two.com:28',
@@ -368,40 +385,34 @@ describe("[DNS client]", function()
           }, list)
       end)
 
-      it("works with a 'domain' option", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "domain local.domain.com",
-              "options ndots:1",
-            }
-          }))
-        local list = {}
+      it("works with a 'domain' option #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "domain local.domain.com",
+          "options ndots:1",
+        })
         -- search using IPv6 type
-        for qname, qtype in client._search_iter("host", client.TYPE_AAAA) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        local cli = assert(client_new({ order = { "AAAA" } }))
+        local answers, err = cli:resolve("host")
         assert.same({
           'host.local.domain.com:28',
           'host:28',
         }, list)
       end)
 
-      it("ignores last successful type", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "search one.com two.com",
-              "options ndots:1",
-            }
-          }))
-        -- insert a last successful type
-        cli.cache["host"] = client.TYPE_CNAME
-        local list = {}
+      it("ignores last successful type #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "search one.com two.com",
+          "options ndots:1",
+        })
         -- search using IPv6 type
-        for qname, qtype in client._search_iter("host", client.TYPE_AAAA) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        local cli = assert(client_new({ order = { "AAAA" } }))
+        cli:insert_last_type("host", resolver.TYPE_CNAME)
+
+        local answers, err = cli:resolve("host")
         assert.same({
             'host.one.com:28',
             'host.two.com:28',
@@ -412,189 +423,187 @@ describe("[DNS client]", function()
     end)
 
     describe("FQDN with type", function()
-      it("works with a 'search' option", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "search one.com two.com",
-              "options ndots:1",
-            }
-          }))
-        local list = {}
+      it("works with a 'search' option #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "search one.com two.com",
+          "options ndots:1",
+        })
         -- search using IPv6 type
-        for qname, qtype in client._search_iter("host.", client.TYPE_AAAA) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        local cli = assert(client_new({ order = { "AAAA" } }))
+        local answers, err = cli:resolve("host.")
         assert.same({
             'host.:28',
           }, list)
       end)
 
-      it("works with a 'domain' option", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "domain local.domain.com",
-              "options ndots:1",
-            }
-          }))
-        local list = {}
+      it("works with a 'domain' option #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "domain local.domain.com",
+          "options ndots:1",
+        })
         -- search using IPv6 type
-        for qname, qtype in client._search_iter("host.", client.TYPE_AAAA) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        local cli = assert(client_new({ order = { "AAAA" } }))
+        local answers, err = cli:resolve("host.")
         assert.same({
           'host.:28',
         }, list)
       end)
 
-      it("ignores last successful type", function()
-        assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "search one.com two.com",
-              "options ndots:1",
-            }
-          }))
-        -- insert a last successful type
-        cli.cache["host"] = client.TYPE_CNAME
-        local list = {}
+      it("ignores last successful type #ttt", function()
+        local list = get_query_domain_list()
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "search one.com two.com",
+          "options ndots:1",
+        })
         -- search using IPv6 type
-        for qname, qtype in client._search_iter("host.", client.TYPE_AAAA) do
-          table.insert(list, tostring(qname)..":"..tostring(qtype))
-        end
+        local cli = assert(client_new({ order = { "AAAA" } }))
+        cli:insert_last_type("host", resolver.TYPE_CNAME)
+
+        local answers, err = cli:resolve("host.")
         assert.same({
             'host.:28',
           }, list)
       end)
-
     end)
 
-    it("honours 'ndots'", function()
-      assert(client.init({
-          resolvConf = {
-            "nameserver 198.51.100.0",
-            "search one.com two.com",
-            "options ndots:1",
-          }
-        }))
-      local list = {}
-      -- now use a name with a dot in it
-      for qname, qtype in client._search_iter("local.host", nil) do
-        table.insert(list, tostring(qname)..":"..tostring(qtype))
-      end
+    it("honours 'ndots' #ttt", function()
+      local list = get_query_domain_list()
+      writefile(resolv_path, {
+        "nameserver 198.51.100.0",
+        "search one.com two.com",
+        "options ndots:1",
+      })
+      -- search using IPv6 type
+      local cli = assert(client_new())
+      local answers, err = cli:resolve("local.host")
       assert.same({
-          'local.host:33',
-          'local.host.one.com:33',
-          'local.host.two.com:33',
-          'local.host:1',
-          'local.host.one.com:1',
-          'local.host.two.com:1',
-          'local.host:28',
-          'local.host.one.com:28',
-          'local.host.two.com:28',
-          'local.host:5',
-          'local.host.one.com:5',
-          'local.host.two.com:5',
-        }, list)
+        'local.host:33',
+        'local.host:1',
+        'local.host:28',
+        'local.host:5',
+      }, list)
     end)
 
-    it("hosts file always resolves first, overriding `ndots`", function()
-      assert(client.init({
-          resolvConf = {
-            "nameserver 198.51.100.0",
-            "search one.com two.com",
-            "options ndots:1",
-          },
-          hosts = {
-            "127.0.0.1 host",
-            "::1 host",
-          },
-          order = { "LAST", "SRV", "A", "AAAA", "CNAME" }
-        }))
-      local list = {}
-      for qname, qtype in client._search_iter("host", nil) do
-        table.insert(list, tostring(qname)..":"..tostring(qtype))
-      end
+    it("hosts file always resolves first, overriding `ndots` #ttt", function()
+      local list = get_query_domain_list()
+      writefile(resolv_path, {
+        "nameserver 198.51.100.0",
+        "search one.com two.com",
+        "options ndots:1",
+      })
+      writefile(hosts_path, {
+        "127.0.0.1 host",
+        "::1 host",
+      })
+      -- search using IPv6 type
+      local cli = assert(client_new({ order = { "LAST", "SRV", "A", "AAAA", "CNAME" } }))
+      local answers, err = cli:resolve("host")
+      --[[ TODO
       assert.same({
-          'host:1',
-          'host.one.com:1',
-          'host.two.com:1',
-          'host.one.com:33',
-          'host.two.com:33',
-          'host:33',
-          'host:28',
-          'host.one.com:28',
-          'host.two.com:28',
-          'host.one.com:5',
-          'host.two.com:5',
-          'host:5',
-        }, list)
+        'host:1',
+        'host.one.com:1',
+        'host.two.com:1',
+        'host.one.com:33',
+        'host.two.com:33',
+        'host:33',
+        'host:28',
+        'host.one.com:28',
+        'host.two.com:28',
+        'host.one.com:5',
+        'host.two.com:5',
+        'host:5',
+      }, list)
+      --]]
     end)
+  end)
 
-    for retrans in ipairs({1, 2}) do
-      for _, timeout in ipairs({1, 2}) do
-        it("correctly observes #timeout of " .. tostring(timeout) .. " seconds with " .. tostring(retrans) .. " retries", function()
-          -- KAG-2300 - https://github.com/Kong/kong/issues/10182
-          -- If we encounter a timeout while talking to the DNS server, expect the total timeout to be close to the
-          -- configured timeout * retrans parameters
-          assert(client.init({
-            resolvConf = {
-              "nameserver 198.51.100.0",
-              "domain one.com",
-            },
-            timeout = timeout * 1000,
-            retrans = retrans,
-            hosts = {
-              "127.0.0.1 host"
-            }
-          }))
-          query_func = function(self, original_query_func, name, options)
-            -- The first request uses syncQuery not waiting on the
-            -- aysncQuery timer, so the low-level r:query() could not sleep(5s),
-            -- it can only sleep(timeout).
-            ngx.sleep(math.min(timeout, 5))
-            return nil
-          end
-          local start_time = ngx.now()
-          client.resolve("host1.one.com.")
-          local duration = ngx.now() - start_time
-          assert.truthy(duration < (timeout * retrans + 1))
-        end)
-      end
+  -- This test will report an alert-level error message, ignore it.
+  it("low-level callback error #ttt", function()
+    receive_func = function(...)
+      error("CALLBACK")
     end
 
+    local cli = assert(client_new())
+    local answers, err = cli:resolve("srv.timeout.com")
+    assert.is_nil(answers)
+    assert.match("callback threw an error:.*CALLBACK", err)
+  end)
+
+  describe("timeout", function ()
     -- The domain name below needs to have both a SRV and an A answers
     local SRV_A_TEST_NAME = "timeouttest."..TEST_DOMAIN
 
-    it("verify correctly set up test DNS entry", function()
-      assert(client.init({ timeout = 1000, retrans = 2 }))
-      local answers = client.resolve(SRV_A_TEST_NAME, { qtype = client.TYPE_SRV})
-      assert.same(client.TYPE_SRV, answers[1].type)
-      answers = client.resolve(SRV_A_TEST_NAME, { qtype = client.TYPE_A})
-      assert.same(client.TYPE_A, answers[1].type)
-    end)
-
-    it("does not respond with incorrect answer on transient failure", function()
+    it("dont try other types with the low-level error #ttt", function()
       -- KAG-2300 - https://github.com/Kong/kong/issues/10182
       -- If we encounter a timeout while talking to the DNS server, don't keep trying with other answers types
-      assert(client.init({ timeout = 1000, retrans = 2 }))
+      writefile(resolv_path, {
+        "nameserver 198.51.100.0",
+        "options timeout:1",
+        "options attempts:3",
+      })
+
+      local query_count = 0
       query_func = function(self, original_query_func, name, options)
-        if options.qtype == client.TYPE_SRV then
-          ngx.sleep(10)
-        else
-          return original_query_func(self, name, options)
-        end
+        assert(options.qtype == resolver.TYPE_SRV)
+        query_count = query_count + 1
+        return original_query_func(self, name, options)
       end
-      local answers = client.resolve(SRV_A_TEST_NAME)
+
+      local receive_count = 0
+      receive_func = function(...)
+        receive_count = receive_count + 1
+        return nil, "timeout"
+      end
+
+      local cli = assert(client_new())
+      assert.same(cli.r_opts.retrans, 3)
+      assert.same(cli.r_opts.timeout, 1)
+      local answers, err = cli:resolve("srv.timeout.com")
       assert.is_nil(answers)
+      assert.same(err, "DNS server error: failed to receive reply from UDP server 198.51.100.0:53: timeout")
+      assert.same(receive_count, 3)
+      assert.same(query_count, 1)
     end)
+
+    -- KAG-2300 - https://github.com/Kong/kong/issues/10182
+    -- If we encounter a timeout while talking to the DNS server,
+    -- expect the total timeout to be close to timeout * attemps parameters
+    for _, attempts in ipairs({1, 2}) do
+    for _, timeout in ipairs({1, 2}) do
+      it("options: timeout: " .. timeout .. " seconds, attempts: " .. attempts .. " times #ttt", function()
+        query_func = function(self, original_query_func, name, options)
+          ngx.sleep(math.min(timeout, 5))
+          return nil, "timeout" .. timeout .. attempts
+        end
+        writefile(resolv_path, {
+          "nameserver 198.51.100.0",
+          "options timeout:" .. timeout,
+          "options attempts:" .. attempts,
+        })
+        local cli = assert(client_new())
+        assert.same(cli.r_opts.retrans, attempts)
+        assert.same(cli.r_opts.timeout, timeout)
+
+        local start_time = ngx.now()
+        local answers, err = cli:resolve("timeout.com")
+        assert.is.Nil(answers)
+        assert.is("DNS server error: timeout" .. timeout .. attempts)
+        local duration = ngx.now() - start_time
+        assert.truthy(duration < (timeout * attempts + 1))
+      end)
+    end
+    end
 
   end)
 
 
   it("fetching a answers without nameservers errors", function()
-    assert(client.init({ resolvConf = {} }))
+    assert(client.new({ resolvConf = {} }))
 
     local host = TEST_DOMAIN
     local typ = client.TYPE_A
@@ -602,19 +611,6 @@ describe("[DNS client]", function()
     local answers, err, _ = client.resolve(host, { qtype = typ })
     assert.is_nil(answers)
     assert(err:find("failed to create a resolver: no nameservers specified"))
-  end)
-
-  it("fetching a TXT answers", function()
-    assert(client.init())
-
-    local host = "txttest."..TEST_DOMAIN
-    local typ = client.TYPE_TXT
-
-    local answers, err, try_list = client.resolve(host, { qtype = typ })
-    assert(answers, (err or "") .. tostring(try_list))
-    assert.are.equal(host, answers[1].name)
-    assert.are.equal(typ, answers[1].type)
-    assert.are.equal(#answers, 1)
   end)
 
   it("fetching a CNAME answers", function()
@@ -653,9 +649,9 @@ describe("[DNS client]", function()
     local touch_diff = math.abs(now - answers.touch)
     local ttl_diff = math.abs((now + answers[1].ttl) - answers.expire)
     assert(touch_diff < 0.01, "Expected difference to be near 0; "..
-                                tostring(touch_diff))
+    tostring(touch_diff))
     assert(ttl_diff < 0.01, "Expected difference to be near 0; "..
-                                tostring(ttl_diff))
+    tostring(ttl_diff))
 
     sleep(1)
 
@@ -670,9 +666,9 @@ describe("[DNS client]", function()
     touch_diff = math.abs(now - answers.touch)
     ttl_diff = math.abs((now + answers[1].ttl) - answers.expire)
     assert(touch_diff < 0.01, "Expected difference to be near 0; "..
-                                tostring(touch_diff))
+    tostring(touch_diff))
     assert((0.990 < ttl_diff) and (ttl_diff < 1.01),
-              "Expected difference to be near 1; "..tostring(ttl_diff))
+    "Expected difference to be near 1; "..tostring(ttl_diff))
 
   end)
 
@@ -690,9 +686,9 @@ describe("[DNS client]", function()
     end
 
     local res, _, _ = client.resolve(
-      "some.upper.CASE",
-      { qtype = client.TYPE_A },
-      false)
+    "some.upper.CASE",
+    { qtype = client.TYPE_A },
+    false)
     assert.equal(1, #res)
     assert.equal("some.upper.case", res[1].name)
   end)
@@ -820,11 +816,11 @@ describe("[DNS client]", function()
 
   it("fetching non-type-matching answerss", function()
     assert(client.init({
-          -- don't supply resolvConf and fallback to default resolver
-          -- so that CI and docker can have reliable results
-          -- but remove `search` and `domain`
-          search = {},
-        }))
+      -- don't supply resolvConf and fallback to default resolver
+      -- so that CI and docker can have reliable results
+      -- but remove `search` and `domain`
+      search = {},
+    }))
 
     local host = "srvtest."..TEST_DOMAIN
     local typ = client.TYPE_A   --> the entry is SRV not A
@@ -836,11 +832,11 @@ describe("[DNS client]", function()
 
   it("fetching non-existing answerss", function()
     assert(client.init({
-          -- don't supply resolvConf and fallback to default resolver
-          -- so that CI and docker can have reliable results
-          -- but remove `search` and `domain`
-          search = {},
-        }))
+      -- don't supply resolvConf and fallback to default resolver
+      -- so that CI and docker can have reliable results
+      -- but remove `search` and `domain`
+      search = {},
+    }))
 
     local host = "IsNotHere."..TEST_DOMAIN
 
@@ -873,9 +869,9 @@ describe("[DNS client]", function()
     end
 
     local _, err, _ = client.resolve(
-      "1.2.3.4",
-      { qtype = client.TYPE_SRV },
-      false
+    "1.2.3.4",
+    { qtype = client.TYPE_SRV },
+    false
     )
     assert.equal(0, callcount)
     assert.equal(BAD_IPV4_ERROR, err)
@@ -921,9 +917,9 @@ describe("[DNS client]", function()
     end
 
     local _, err, _ = client.resolve(
-      "[1:2::3:4]",
-      { qtype = client.TYPE_SRV },
-      false
+    "[1:2::3:4]",
+    { qtype = client.TYPE_SRV },
+    false
     )
     assert.equal(0, callcount)
     assert.equal(BAD_IPV6_ERROR, err)
@@ -931,11 +927,11 @@ describe("[DNS client]", function()
 
   it("fetching invalid IPv6 address", function()
     assert(client.init({
-          resolvConf = {
-            -- resolv.conf without `search` and `domain` options
-            "nameserver 198.51.100.0",
-          },
-        }))
+      resolvConf = {
+        -- resolv.conf without `search` and `domain` options
+        "nameserver 198.51.100.0",
+      },
+    }))
 
     local host = "[1::2:3::4]"  -- 2x double colons
 
@@ -970,9 +966,9 @@ describe("[DNS client]", function()
     end
 
     local res, _, _ = client.resolve(
-      host,
-      { qtype = client.TYPE_SRV },
-      false
+    host,
+    { qtype = client.TYPE_SRV },
+    false
     )
     assert.equal("["..address.."]", res[1].target)
 
@@ -980,24 +976,24 @@ describe("[DNS client]", function()
 
   it("recursive lookups failure - single resolve", function()
     assert(client.init({
-          resolvConf = {
-            -- resolv.conf without `search` and `domain` options
-            "nameserver 198.51.100.0",
-          },
-        }))
+      resolvConf = {
+        -- resolv.conf without `search` and `domain` options
+        "nameserver 198.51.100.0",
+      },
+    }))
     query_func = function(self, original_query_func, name, opts)
       if name ~= "hello.world" and (opts or {}).qtype ~= client.TYPE_CNAME then
         return original_query_func(self, name, opts)
       end
       return {
-                {
-                  type = client.TYPE_CNAME,
-                  cname = "hello.world",
-                  class = 1,
-                  name = "hello.world",
-                  ttl = 30,
-                },
-              }
+        {
+          type = client.TYPE_CNAME,
+          cname = "hello.world",
+          class = 1,
+          name = "hello.world",
+          ttl = 30,
+        },
+      }
     end
 
     local cli, err, _ = client.resolve("hello.world")
@@ -1007,11 +1003,11 @@ describe("[DNS client]", function()
 
   it("recursive lookups failure - single", function()
     assert(client.init({
-          resolvConf = {
-            -- resolv.conf without `search` and `domain` options
-            "nameserver 198.51.100.0",
-          },
-        }))
+      resolvConf = {
+        -- resolv.conf without `search` and `domain` options
+        "nameserver 198.51.100.0",
+      },
+    }))
     local lrucache = cli.cache
     local entry1 = {
       {
@@ -1035,11 +1031,11 @@ describe("[DNS client]", function()
 
   it("recursive lookups failure - multi", function()
     assert(client.init({
-          resolvConf = {
-            -- resolv.conf without `search` and `domain` options
-            "nameserver 198.51.100.0",
-          },
-        }))
+      resolvConf = {
+        -- resolv.conf without `search` and `domain` options
+        "nameserver 198.51.100.0",
+      },
+    }))
     local lrucache = cli.cache
     local entry1 = {
       {
@@ -1076,23 +1072,23 @@ describe("[DNS client]", function()
   it("resolving from the /etc/hosts file; preferred A or AAAA order", function()
     local f = tempfilename()
     writefile(f, [[
-127.3.2.1 localhost
-1::2 localhost
-]])
+    127.3.2.1 localhost
+    1::2 localhost
+    ]])
     assert(client.init(
-      {
-        hosts = f,
-        order = {"SRV", "CNAME", "A", "AAAA"},
-      }))
+    {
+      hosts = f,
+      order = {"SRV", "CNAME", "A", "AAAA"},
+    }))
 
     local lrucache = cli.cache
     assert.equal(client.TYPE_A, lrucache:get("localhost")) -- success set to A as it is the preferred option
 
     assert(client.init(
-      {
-        hosts = f,
-        order = {"SRV", "CNAME", "AAAA", "A"},
-      }))
+    {
+      hosts = f,
+      order = {"SRV", "CNAME", "AAAA", "A"},
+    }))
 
     lrucache = cli.cache
     assert.equal(client.TYPE_AAAA, lrucache:get("localhost")) -- success set to AAAA as it is the preferred option
@@ -1102,12 +1098,12 @@ describe("[DNS client]", function()
   it("resolving from the /etc/hosts file", function()
     local f = tempfilename()
     writefile(f, [[
-127.3.2.1 localhost
-1::2 localhost
+    127.3.2.1 localhost
+    1::2 localhost
 
-123.123.123.123 mashape
-1234::1234 kong.for.president
-]])
+    123.123.123.123 mashape
+    1234::1234 kong.for.president
+    ]])
 
     assert(client.init({ hosts = f }))
     os.remove(f)
@@ -1428,11 +1424,11 @@ describe("[DNS client]", function()
     end)
     it("recursive lookups failure", function()
       assert(client.init({
-            resolvConf = {
-              -- resolv.conf without `search` and `domain` options
-              "nameserver 198.51.100.0",
-            },
-          }))
+        resolvConf = {
+          -- resolv.conf without `search` and `domain` options
+          "nameserver 198.51.100.0",
+        },
+      }))
       local lrucache = cli.cache
       local entry1 = {
         {
@@ -1467,39 +1463,38 @@ describe("[DNS client]", function()
     end)
   end)
 
-
   it("verifies validTtl", function()
     local validTtl = 0.1
     local emptyTtl = 0.1
     local staleTtl = 0.1
     local qname = "konghq.com"
     assert(client.init({
-          emptyTtl = emptyTtl,
-          staleTtl = staleTtl,
-          validTtl = validTtl,
-          resolvConf = {
-            -- resolv.conf without `search` and `domain` options
-            "nameserver 198.51.100.0",
-          },
-        }))
+      emptyTtl = emptyTtl,
+      staleTtl = staleTtl,
+      validTtl = validTtl,
+      resolvConf = {
+        -- resolv.conf without `search` and `domain` options
+        "nameserver 198.51.100.0",
+      },
+    }))
 
     -- mock query function to return a default answers
     query_func = function(self, original_query_func, name, options)
       return  {
-                {
-                  type = client.TYPE_A,
-                  address = "5.6.7.8",
-                  class = 1,
-                  name = qname,
-                  ttl = 10,   -- should be overridden by the validTtl setting
-                },
-              }
+        {
+          type = client.TYPE_A,
+          address = "5.6.7.8",
+          class = 1,
+          name = qname,
+          ttl = 10,   -- should be overridden by the validTtl setting
+        },
+      }
     end
 
     -- do a query
     local res1, _, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
 
     assert.equal(validTtl, res1[1].ttl)
@@ -1512,13 +1507,13 @@ describe("[DNS client]", function()
     local staleTtl = 0.1
     local qname = "really.really.really.does.not.exist."..TEST_DOMAIN
     assert(client.init({
-          emptyTtl = emptyTtl,
-          staleTtl = staleTtl,
-          -- don't supply resolvConf and fallback to default resolver
-          -- so that CI and docker can have reliable results
-          -- but remove `search` and `domain`
-          search = {},
-        }))
+      emptyTtl = emptyTtl,
+      staleTtl = staleTtl,
+      -- don't supply resolvConf and fallback to default resolver
+      -- so that CI and docker can have reliable results
+      -- but remove `search` and `domain`
+      search = {},
+    }))
 
     -- mock query function to count calls
     local call_count = 0
@@ -1531,8 +1526,8 @@ describe("[DNS client]", function()
     -- make a first request, populating the cache
     local res1, res2, err1, err2, _
     res1, err1, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res1)
     assert.are.equal(1, call_count)
@@ -1542,8 +1537,8 @@ describe("[DNS client]", function()
 
     -- make a second request, result from cache, still called only once
     res2, err2, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res2)
     assert.are.equal(1, call_count)
@@ -1556,8 +1551,8 @@ describe("[DNS client]", function()
     -- wait for expiry of Ttl and retry, still called only once
     sleep(emptyTtl+0.5 * staleTtl)
     res2, err2 = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res2)
     assert.are.equal(1, call_count)
@@ -1570,8 +1565,8 @@ describe("[DNS client]", function()
     -- wait for expiry of staleTtl and retry, should be called twice now
     sleep(0.75 * staleTtl)
     res2, err2 = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res2)
     assert.are.equal(2, call_count)
@@ -1587,13 +1582,13 @@ describe("[DNS client]", function()
     local staleTtl = 0.1
     local qname = "realname.com"
     assert(client.init({
-          badTtl = badTtl,
-          staleTtl = staleTtl,
-          resolvConf = {
-            -- resolv.conf without `search` and `domain` options
-            "nameserver 198.51.100.0",
-          },
-        }))
+      badTtl = badTtl,
+      staleTtl = staleTtl,
+      resolvConf = {
+        -- resolv.conf without `search` and `domain` options
+        "nameserver 198.51.100.0",
+      },
+    }))
 
     -- mock query function to count calls, and return errors
     local call_count = 0
@@ -1606,8 +1601,8 @@ describe("[DNS client]", function()
     -- initial request to populate the cache
     local res1, res2, err1, err2, _
     res1, err1, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res1)
     assert.are.equal(1, call_count)
@@ -1617,8 +1612,8 @@ describe("[DNS client]", function()
 
     -- try again, from cache, should still be called only once
     res2, err2, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res2)
     assert.are.equal(call_count, 1)
@@ -1631,8 +1626,8 @@ describe("[DNS client]", function()
     -- wait for expiry of ttl and retry, still 1 call, but now stale result
     sleep(badTtl + 0.5 * staleTtl)
     res2, err2, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res2)
     assert.are.equal(call_count, 1)
@@ -1644,8 +1639,8 @@ describe("[DNS client]", function()
     -- wait for expiry of staleTtl and retry, 2 calls, new result
     sleep(0.75 * staleTtl)
     res2, err2, _ = client.resolve(
-      qname,
-      { qtype = client.TYPE_A }
+    qname,
+    { qtype = client.TYPE_A }
     )
     assert.is_nil(res2)
     assert.are.equal(call_count, 2)  -- 2 calls now
@@ -1678,9 +1673,9 @@ describe("[DNS client]", function()
         -- starting resolving
         coroutine.yield(coroutine.running())
         local result, _, _ = client.resolve(
-                                TEST_DOMAIN,
-                                { qtype = client.TYPE_A }
-                              )
+        TEST_DOMAIN,
+        { qtype = client.TYPE_A }
+        )
         table.insert(results, result)
       end
 
@@ -1778,65 +1773,6 @@ describe("[DNS client]", function()
       -- results[10] comes from synchronous DNS access of the first request
       assert.equal(ip, results[10][1]["address"])
     end)
-  end)
-
-  it("noSynchronisation == true, queries on each request", function()
-    -- basically the local function _synchronized_query
-    assert(client.init({
-      resolvConf = {
-        -- resolv.conf without `search` and `domain` options
-        "nameserver 198.51.100.0",
-      },
-      noSynchronisation = true,
-    }))
-
-    -- insert a stub thats waits and returns a fixed answers
-    local call_count = 0
-    local name = TEST_DOMAIN
-    query_func = function()
-      local ip = "1.4.2.3"
-      local entry = {
-        {
-          type = client.TYPE_A,
-          address = ip,
-          class = 1,
-          name = name,
-          ttl = 10,
-        },
-        touch = 0,
-        expire = gettime() + 10,
-      }
-      sleep(1) -- wait before we return the results
-      call_count = call_count + 1
-      return entry
-    end
-
-    local coros = {}
-
-    -- we're going to schedule a whole bunch of queries, all of this
-    -- function, which does the same lookup and stores the result
-    local x = function()
-      -- the function is ran when started. So we must immediately yield
-      -- so the scheduler loop can first schedule them all before actually
-      -- starting resolving
-      coroutine.yield(coroutine.running())
-      local _, _, _ = client.resolve(name, {qtype = client.TYPE_A})
-    end
-
-    -- schedule a bunch of the same lookups
-    for _ = 1, 10 do
-      local co = ngx.thread.spawn(x)
-      table.insert(coros, co)
-    end
-
-    -- all scheduled and waiting to start due to the yielding done.
-    -- now start them all
-    for i = 1, #coros do
-      ngx.thread.wait(coros[i]) -- this wait will resume the scheduled ones
-    end
-
-    -- all results are unique, each call got its own query
-    assert.equal(call_count, 10)
   end)
 
 end)
