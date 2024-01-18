@@ -5,6 +5,7 @@ local utils = require("kong.resty.dns.utils")
 
 local math_random = math.random
 local table_insert = table.insert
+local table_remove = table.remove
 
 local DEFAULT_HOSTS_FILE = "/etc/hosts"
 local DEFAULT_RESOLV_CONF = "/etc/resolv.conf"
@@ -32,6 +33,14 @@ function _M.parse_resolv_conf(path, enable_ipv6)
     resolv.options = resolv.options or {}
     resolv.ndots = resolv.options.ndots or 1
     resolv.search = resolv.search or (resolv.domain and { resolv.domain })
+    -- remove special domain like "."
+    if resolv.search then
+        for i = #resolv.search, 1, -1 do
+            if resolv.search[i] == "." then
+                table_remove(resolv.search, i)
+            end
+        end
+    end
     -- nameservers
     if resolv.nameserver then
         local nameservers = {}
@@ -65,6 +74,7 @@ function _M.search_names(name, resolv)
     for _, suffix in ipairs(resolv.search) do
         table_insert(names, name .. "." .. suffix)
     end
+    table_insert(names, name)
     return names
 end
 
