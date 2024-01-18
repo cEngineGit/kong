@@ -521,6 +521,23 @@ local function validate_path_with_regexes(path)
   return true
 end
 
+local function validate_regex_or_plain_pattern(pattern)
+  if pattern:sub(1, 1) ~= "~" then
+    return true
+  end
+
+  pattern = pattern:sub(2)
+
+  local _, _, err = ngx.re.find("", pattern, "aj")
+  if err then
+    return nil,
+           string.format("invalid regex: '%s' (PCRE returned: %s)",
+                         pattern, err)
+  end
+
+  return true
+end
+
 
 typedefs.sources = Schema.define {
   type = "set",
@@ -618,6 +635,12 @@ typedefs.headers = Schema.define {
     },
   },
   description = "A map of header names to arrays of header values."
+}
+
+typedefs.regex_or_plain_pattern = Schema.define {
+  type = "string",
+  custom_validator = validate_regex_or_plain_pattern,
+  description = "A string representing a regex or plain pattern."
 }
 
 typedefs.no_headers = Schema.define(typedefs.headers { eq = null, description = "A null value representing no headers." })
