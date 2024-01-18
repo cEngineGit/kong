@@ -22,9 +22,10 @@ local DEFAULT_ERROR_TTL = 1     -- unit: second
 local DEFAULT_STALE_TTL = 4
 local DEFAULT_EMPTY_TTL = 30
 
-local DEFAULT_ORDER = { "LAST", "SRV", "A", "CNAME" }
+local DEFAULT_ORDER = { "LAST", "SRV", "A", "AAAA", "CNAME" }
 
 local TYPE_LAST = -1
+
 local valid_types = {
     SRV = resolver.TYPE_SRV,
     A = resolver.TYPE_A,
@@ -51,8 +52,18 @@ local _M = {}
 local mt = { __index = _M }
 
 
+local function insert_last_type(cache, name, qtype)
+    cache:set(name .. ":l", { ttl = 0 }, qtype)
+end
+
+
+local function get_last_type(cache, name)
+    return cache:get(name .. ":l")
+end
+
+
 -- insert hosts into cache
-local function init_hosts(cache, path)
+local function init_hosts(cache, path, preferred_ip_type)
     local hosts, err = utils.parse_hosts(path)
     if not hosts then
         ngx.log(ngx.WARN, "Invalid hosts file: ", err)
@@ -68,6 +79,10 @@ local function init_hosts(cache, path)
     end
 
     local function insert_answer(name, qtype, address)
+        if not address then
+            return
+        end
+
         local key = name .. ":" .. qtype
         local answers = {{
             name = name,
@@ -83,9 +98,13 @@ local function init_hosts(cache, path)
         name = name:lower()
         if address.ipv4 then
             insert_answer(name, resolver.TYPE_A, address.ipv4)
+            insert_last_type(cache, name, resolver.TYPE_A)
         end
         if address.ipv6 then
             insert_answer(name, resolver.TYPE_AAAA, address.ipv6)
+            if not address.ipv4 or preferred_ip_type == resolver.TYPE_AAAA then
+                insert_last_type(cache, name, resolver.TYPE_AAAA)
+            end
         end
     end
 end
@@ -133,22 +152,31 @@ function _M.new(opts)
 
     cache:purge(true)
 
-    -- parse hosts
-    init_hosts(cache, opts.hosts)
-
     -- parse order
     local search_types = {}
     local order = opts.order or DEFAULT_ORDER
+    local preferred_ip_type
     for _, typstr in ipairs(order) do
         local qtype = valid_types[typstr:upper()]
         if not qtype then
             return nil, "Invalid dns record type in order array: " .. typstr
         end
         table_insert(search_types, qtype)
+        if (qtype == resolver.TYPE_A or qtype == resolver.TYPE_AAAA) and
+            not preferred_ip_type
+        then
+            preferred_ip_type = qtype
+        end
     end
+
     if #search_types == 0 then
         return nil, "Invalid order array: empty record types"
     end
+
+    preferred_ip_type = preferred_ip_type or resolver.TYPE_A
+
+    -- parse hosts
+    init_hosts(cache, opts.hosts, preferred_ip_type)
 
     return setmetatable({
         r_opts = r_opts,
@@ -244,13 +272,12 @@ local function resolve_query(self, name, qtype, tries)
         return nil, "failed to instantiate the resolver: " .. err
     end
 
-    logerr("q:", name)
+    logerr("query:", name)
     local options = { additional_section = true, qtype = qtype }
     local answers, err, q_tries = r:query(name, options, {})
     if r.destroy then
         r:destroy()
     end
-    assert(answers or err)
 
     if not answers then
         log(tries, q_tries)
@@ -325,6 +352,7 @@ local function resolve_name_type(self, name, qtype, opts, tries)
         return nil, "recursion detected for name: " .. name
     end
 
+    logerr("l2 cache get:", key)
     local answers, err, hit_level = self.cache:get(key, nil,
                                                 resolve_name_type_callback,
                                                 self, name, qtype, opts, tries)
@@ -348,7 +376,7 @@ local function search_types(self, name)
 
     for _, qtype in ipairs(self.search_types) do
         if qtype == TYPE_LAST then
-            qtype = self.cache:get(name .. ":l")
+            qtype = get_last_type(self.cache, name)
         end
         if qtype and not checked_types[qtype] then
             table.insert(types, qtype)
@@ -356,6 +384,7 @@ local function search_types(self, name)
         end
     end
 
+    logerr("search types:", json(types))
     return types
 end
 
@@ -367,7 +396,9 @@ local function resolve_names_and_types(self, name, opts, tries)
 
     for _, qtype in ipairs(types) do
         for _, qname in ipairs(names) do
+            logerr(" resovle_name_type:", qname .. ":" .. qtype)
             answers, err = resolve_name_type(self, qname, qtype, opts, tries)
+            logerr(" resolve_name_tyep return: ", json(answers), " :", err)
 
             -- severe error occurred
             if not answers then
@@ -375,8 +406,7 @@ local function resolve_names_and_types(self, name, opts, tries)
             end
 
             if not answers.errcode then
-                -- cache the TYPE_LAST
-                self.cache:set(name .. ":l", { ttl = 0 }, qtype)
+                insert_last_type(self.cache, qtype) -- cache the TYPE_LAST
                 return answers, nil, tries
             end
         end
@@ -478,9 +508,14 @@ function _M.toip(name, port, cache_only, tries)
     return dns_client:_resolve(name, opts, tries)
 end
 
+
+-- For testing
 if package.loaded.busted then
     function _M.getcache()
         return dns_client.cache
+    end
+    function _M:insert_last_type(name, qtype)
+        insert_last_type(self.cache, name, qtype)
     end
 end
 
