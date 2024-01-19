@@ -107,6 +107,8 @@ local function init_hosts(cache, path, preferred_ip_type)
             end
         end
     end
+
+    return hosts
 end
 
 
@@ -176,7 +178,7 @@ function _M.new(opts)
     preferred_ip_type = preferred_ip_type or resolver.TYPE_A
 
     -- parse hosts
-    init_hosts(cache, opts.hosts, preferred_ip_type)
+    local hosts = init_hosts(cache, opts.hosts, preferred_ip_type)
 
     return setmetatable({
         r_opts = r_opts,
@@ -186,6 +188,7 @@ function _M.new(opts)
         stale_ttl = opts.stale_ttl or DEFAULT_STALE_TTL,
         empty_ttl = opts.empty_ttl or DEFAULT_EMPTY_TTL,
         resolv = opts._resolv or resolv,
+        hosts = hosts,
         enable_ipv6 = enable_ipv6,
         search_types = search_types,
     }, mt)
@@ -356,7 +359,7 @@ local function resolve_name_type(self, name, qtype, opts, tries)
     local answers, err, hit_level = self.cache:get(key, nil,
                                                 resolve_name_type_callback,
                                                 self, name, qtype, opts, tries)
-    if err and string.sub(err, 1, #"callback") == "callback" then
+    if err and err:sub(1, #"callback") == "callback" then
         ngx.log(ngx.ALERT, err)
     end
 
@@ -391,7 +394,7 @@ end
 
 local function resolve_names_and_types(self, name, opts, tries)
     local types = search_types(self, name)
-    local names = utils.search_names(name, self.resolv)
+    local names = utils.search_names(name, self.resolv, self.hosts)
     local answers, err
 
     for _, qtype in ipairs(types) do

@@ -91,7 +91,7 @@ describe("[DNS client]", function()
       return r
     end
 
-    -- restore its API overlapped by the compatable layer
+    -- restore its API overlapped by the compatible layer
     package.loaded["kong.resty.dns_client"] = nil
     client = require("kong.resty.dns_client")
     client.resolve = client._resolve
@@ -174,8 +174,7 @@ describe("[DNS client]", function()
 
 
   describe("iterating searches", function()
-
-    local function get_query_domain_list()
+    local function hook_query_func_get_list()
       local list = {}
       query_func = function(self, original_query_func, name, options)
         table.insert(list, name .. ":" .. options.qtype)
@@ -185,17 +184,17 @@ describe("[DNS client]", function()
     end
 
     describe("without type", function()
-
       it("works with a 'search' option #ttt", function()
-        list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         local answers, err = cli:resolve("host")
+
         assert.same(answers, nil)
         assert.same(err, "no available records")
         assert.same({
@@ -215,15 +214,16 @@ describe("[DNS client]", function()
       end)
 
       it("works with a 'search .' option #ttt", function()
-        list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search .",
           "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         local answers, err = cli:resolve("host")
+
         assert.same(answers, nil)
         assert.same(err, "no available records")
         assert.same({
@@ -235,15 +235,16 @@ describe("[DNS client]", function()
       end)
 
       it("works with a 'domain' option #ttt", function()
-        list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "domain local.domain.com",
           "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         local answers, err = cli:resolve("host")
+
         assert.same(answers, nil)
         assert.same(err, "no available records")
         assert.same({
@@ -259,17 +260,18 @@ describe("[DNS client]", function()
       end)
 
       it("handles last successful type #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
             "nameserver 198.51.100.0",
             "search one.com two.com",
             "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         cli:insert_last_type("host", resolver.TYPE_CNAME)
 
         local answers, err = cli:resolve("host")
+
         assert.same({
           'host.one.com:5',
           'host.two.com:5',
@@ -289,13 +291,13 @@ describe("[DNS client]", function()
 
     describe("FQDN without type", function()
       it("works with a 'search' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         local answers, err = cli:resolve("host.")
 
@@ -308,13 +310,13 @@ describe("[DNS client]", function()
       end)
 
       it("works with a 'search .' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search .",
           "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         local answers, err = cli:resolve("host.")
 
@@ -327,13 +329,13 @@ describe("[DNS client]", function()
       end)
 
       it("works with a 'domain' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
               "nameserver 198.51.100.0",
               "domain local.domain.com",
               "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         local answers, err = cli:resolve("host.")
 
@@ -346,13 +348,13 @@ describe("[DNS client]", function()
       end)
 
       it("handles last successful type #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
 
+        local list = hook_query_func_get_list()
         local cli = assert(client_new())
         cli:insert_last_type("host.", resolver.TYPE_CNAME)
 
@@ -369,15 +371,16 @@ describe("[DNS client]", function()
 
     describe("with type", function()
       it("works with a 'search' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
-        -- search using IPv6 type
-        local cli = assert(client_new({ order = { "AAAA" } }))
+
+        local list = hook_query_func_get_list()
+        local cli = assert(client_new({ order = { "AAAA" } }))  -- IPv6 type
         local answers, err = cli:resolve("host")
+
         assert.same({
             'host.one.com:28',
             'host.two.com:28',
@@ -386,15 +389,16 @@ describe("[DNS client]", function()
       end)
 
       it("works with a 'domain' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "domain local.domain.com",
           "options ndots:1",
         })
-        -- search using IPv6 type
-        local cli = assert(client_new({ order = { "AAAA" } }))
+
+        local list = hook_query_func_get_list()
+        local cli = assert(client_new({ order = { "AAAA" } }))  -- IPv6 type
         local answers, err = cli:resolve("host")
+
         assert.same({
           'host.local.domain.com:28',
           'host:28',
@@ -402,14 +406,14 @@ describe("[DNS client]", function()
       end)
 
       it("ignores last successful type #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
-        -- search using IPv6 type
-        local cli = assert(client_new({ order = { "AAAA" } }))
+
+        local list = hook_query_func_get_list()
+        local cli = assert(client_new({ order = { "AAAA" } }))  -- IPv6 type
         cli:insert_last_type("host", resolver.TYPE_CNAME)
 
         local answers, err = cli:resolve("host")
@@ -424,14 +428,14 @@ describe("[DNS client]", function()
 
     describe("FQDN with type", function()
       it("works with a 'search' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
-        -- search using IPv6 type
-        local cli = assert(client_new({ order = { "AAAA" } }))
+
+        local list = hook_query_func_get_list()
+        local cli = assert(client_new({ order = { "AAAA" } }))  -- IPv6 type
         local answers, err = cli:resolve("host.")
         assert.same({
             'host.:28',
@@ -439,32 +443,34 @@ describe("[DNS client]", function()
       end)
 
       it("works with a 'domain' option #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "domain local.domain.com",
           "options ndots:1",
         })
-        -- search using IPv6 type
-        local cli = assert(client_new({ order = { "AAAA" } }))
+
+        local list = hook_query_func_get_list()
+        local cli = assert(client_new({ order = { "AAAA" } }))  -- IPv6 type
         local answers, err = cli:resolve("host.")
+
         assert.same({
           'host.:28',
         }, list)
       end)
 
       it("ignores last successful type #ttt", function()
-        local list = get_query_domain_list()
         writefile(resolv_path, {
           "nameserver 198.51.100.0",
           "search one.com two.com",
           "options ndots:1",
         })
-        -- search using IPv6 type
-        local cli = assert(client_new({ order = { "AAAA" } }))
+
+        local list = hook_query_func_get_list()
+        local cli = assert(client_new({ order = { "AAAA" } }))  -- IPv6 type
         cli:insert_last_type("host", resolver.TYPE_CNAME)
 
         local answers, err = cli:resolve("host.")
+
         assert.same({
             'host.:28',
           }, list)
@@ -472,15 +478,16 @@ describe("[DNS client]", function()
     end)
 
     it("honours 'ndots' #ttt", function()
-      local list = get_query_domain_list()
       writefile(resolv_path, {
         "nameserver 198.51.100.0",
         "search one.com two.com",
         "options ndots:1",
       })
-      -- search using IPv6 type
+
+      local list = hook_query_func_get_list()
       local cli = assert(client_new())
       local answers, err = cli:resolve("local.host")
+
       assert.same({
         'local.host:33',
         'local.host:1',
@@ -490,7 +497,6 @@ describe("[DNS client]", function()
     end)
 
     it("hosts file always resolves first, overriding `ndots` #ttt", function()
-      local list = get_query_domain_list()
       writefile(resolv_path, {
         "nameserver 198.51.100.0",
         "search one.com two.com",
@@ -500,25 +506,19 @@ describe("[DNS client]", function()
         "127.0.0.1 host",
         "::1 host",
       })
-      -- search using IPv6 type
-      local cli = assert(client_new({ order = { "LAST", "SRV", "A", "AAAA", "CNAME" } }))
+
+      local list = hook_query_func_get_list()
+      -- perferred IP type: IPv4 (A takes priority in order)
+      local cli = assert(client_new({ order = { "LAST", "SRV", "A", "AAAA" } }))
       local answers, err = cli:resolve("host")
-      --[[ TODO
-      assert.same({
-        'host:1',
-        'host.one.com:1',
-        'host.two.com:1',
-        'host.one.com:33',
-        'host.two.com:33',
-        'host:33',
-        'host:28',
-        'host.one.com:28',
-        'host.two.com:28',
-        'host.one.com:5',
-        'host.two.com:5',
-        'host:5',
-      }, list)
-      --]]
+      assert.same(answers[1].address, "127.0.0.1")
+      assert.same({}, list) -- hit on cache, so no query to the nameserver
+
+      -- perferred IP type: IPv6 (AAAA takes priority in order)
+      local cli = assert(client_new({ order = { "LAST", "SRV", "AAAA", "A" } }))
+      local answers, err = cli:resolve("host")
+      assert.same(answers[1].address, "[::1]")
+      assert.same({}, list)
     end)
   end)
 

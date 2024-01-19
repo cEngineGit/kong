@@ -65,7 +65,7 @@ end
 
 
 -- construct names from resolv options: search, ndots and domain
-function _M.search_names(name, resolv)
+function _M.search_names(name, resolv, hosts)
     if not resolv.search or _M.is_fqdn(name, resolv.ndots) then
         return { name }
     end
@@ -74,7 +74,11 @@ function _M.search_names(name, resolv)
     for _, suffix in ipairs(resolv.search) do
         table_insert(names, name .. "." .. suffix)
     end
-    table_insert(names, name)
+    if hosts[name] then
+        table_insert(names, 1, name)
+    else
+        table_insert(names, name)
+    end
     return names
 end
 
