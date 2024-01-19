@@ -478,7 +478,9 @@ function _M.attach_new_db_routes(app, routes)
         return method_handler(self, kong.db, handler_helpers)
       end
 
-      methods[method_name] = parse_params(wrapped_handler)
+      if route_path ~= "/workspaces" or method_name ~= "POST" then
+        methods[method_name] = parse_params(wrapped_handler)
+      end
 
       if HTTP_METHODS[method_name] then
         http_methods_count = http_methods_count + 1

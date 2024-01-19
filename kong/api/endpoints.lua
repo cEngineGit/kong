@@ -201,9 +201,9 @@ local function query_entity(context, self, db, schema, method)
 
   local args
   if is_update or is_insert then
-    args = self.args.post
+    args = self.args and self.args.post
   else
-    args = self.args.uri
+    args = self.args and self.args.uri
   end
 
   local opts = extract_options(args, schema, context)
@@ -396,6 +396,9 @@ local function post_collection_endpoint(schema, foreign_schema, foreign_field_na
       self.args.post[foreign_field_name] = foreign_schema:extract_pk_values(foreign_entity)
     end
 
+    if self.req.method == "POST" and schema.name == "workspaces" then
+      return method_not_allowed()
+    end
     local entity, _, err_t = insert_entity(self, db, schema, method)
     if err_t then
       return handle_error(err_t)
@@ -664,6 +667,9 @@ end
 -- /services/:services/routes/:routes
 local function delete_entity_endpoint(schema, foreign_schema, foreign_field_name, method, is_foreign_entity_endpoint)
   return not foreign_schema and  function(self, db, helpers)
+    if self.req.method == "DELETE" and schema.name == "workspaces" then
+      return method_not_allowed()
+    end
     local _, _, err_t = delete_entity(self, db, schema, method)
     if err_t then
       return handle_error(err_t)
