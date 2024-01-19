@@ -259,6 +259,7 @@ local function process_answers(self, qname, qtype, answers)
         for k, a in pairs(unmatched) do
             process_answers_fields(self, a)
             self.cache:set(k, { ttl = a.ttl }, a)
+            insert_last_type(self.cache, a[1].name, a[1].type)
         end
 
         if #answers == 0 then
@@ -305,6 +306,7 @@ local function start_stale_update_task(self, key, name, qtype)
             local answer = resolve_query(self, name, qtype, {})
             if answers and not answers.errcode then
                 self.cache:set(key, { ttl = answers.ttl }, answers)
+                insert_last_type(self.cache, name, qtype)
             end
         end
     end)
@@ -520,6 +522,9 @@ if package.loaded.busted then
     end
     function _M:insert_last_type(name, qtype)
         insert_last_type(self.cache, name, qtype)
+    end
+    function _M:get_last_type(name)
+        return get_last_type(self.cache, name)
     end
 end
 

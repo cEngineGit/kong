@@ -3,9 +3,11 @@ local tmpname = require("pl.path").tmpname
 local pretty = require("pl.pretty").write
 
 -- hosted in Route53 in the AWS sandbox
-local TEST_DOMAIN="kong-gateway-testing.link"
-local TEST_NS = { "198.51.100.0:53" }
-local TEST_NS = { "192.168.5.2:53" }  -- Kong local official env
+local TEST_DOMAIN = "kong-gateway-testing.link"
+local TEST_NS = "198.51.100.0:53"
+local TEST_NS = "192.168.5.2:53"  -- Kong local official env
+
+local TEST_NSS = { TEST_NS }
 
 local logerr = function(...)
   ngx.log(ngx.ERR, ...)
@@ -116,12 +118,12 @@ describe("[DNS client]", function()
 
     it("succeeds if hosts/resolv.conf fails #ttt", function()
       local cli, err = client.new({
-          nameservers = TEST_NS,
+          nameservers = TEST_NSS,
           hosts = "non/existent/file",
           resolv_conf = "non/exitent/file",
       })
       assert.is.Nil(err)
-      assert.same(cli.r_opts.nameservers, TEST_NS)
+      assert.same(cli.r_opts.nameservers, TEST_NSS)
     end)
 
     describe("inject localhost", function()
@@ -617,7 +619,7 @@ describe("[DNS client]", function()
     local host = "smtp."..TEST_DOMAIN
     local typ = resolver.TYPE_CNAME
 
-    local cli = assert(client_new({ nameservers = TEST_NS }))
+    local cli = assert(client_new({ nameservers = TEST_NSS }))
     local answers = cli:resolve(host, { qtype = typ })
 
     assert.are.equal(host, answers[1].name)
@@ -629,7 +631,7 @@ describe("[DNS client]", function()
     local host = "smtp."..TEST_DOMAIN
     local typ = resolver.TYPE_CNAME
 
-    local cli = assert(client_new({ nameservers = TEST_NS }))
+    local cli = assert(client_new({ nameservers = TEST_NSS }))
     local answers, err, trier = cli:resolve(host .. ".", { qtype = typ })
 
     assert.are.equal(host, answers[1].name) -- answers name does not contain "."
@@ -638,9 +640,11 @@ describe("[DNS client]", function()
   end)
 
   it("cache hit and ttl #ttt", function()
+    -- TOOD: special answers with ttl 0
+    -- [{"name":"kong-gateway-testing.link","class":1,"address":"198.51.100.0","ttl":0,"type":1,"section":1}],
     local host = TEST_DOMAIN
 
-    local cli = assert(client_new({ nameservers = TEST_NS }))
+    local cli = assert(client_new({ nameservers = TEST_NSS }))
     local answers = cli:resolve(host)
     assert.are.equal(host, answers[1].name)
 
@@ -666,46 +670,36 @@ describe("[DNS client]", function()
           ttl = 30,
         }}
     end
-    writefile(resolv_path, "nameserver 198.51.100.0")
-    local cli = assert(client_new())
+    local cli = assert(client_new({ nameservers = TEST_NSS }))
     local answers = cli:resolve("some.upper.CASE")
 
     assert.equal(1, #answers)
     assert.equal("some.upper.case", answers[1].name)
   end)
 
-  it("fetching multiple A answerss", function()
-    assert(client.init())
-
+  it("fetching multiple A answers #ttt", function()
     local host = "atest."..TEST_DOMAIN
-    local typ = resolver.TYPE_A
-
-    local answers = assert(client.resolve(host, { qtype = typ }))
+    local cli = assert(client_new({ nameservers = TEST_NSS, order = {"LAST", "A"}}))
+    local answers = assert(cli:resolve(host))
     assert.are.equal(#answers, 2)
     assert.are.equal(host, answers[1].name)
-    assert.are.equal(typ, answers[1].type)
+    assert.are.equal(resolver.TYPE_A, answers[1].type)
     assert.are.equal(host, answers[2].name)
-    assert.are.equal(typ, answers[2].type)
+    assert.are.equal(resolver.TYPE_A, answers[2].type)
   end)
 
-  it("fetching multiple A answerss FQDN", function()
-    assert(client.init())
-
+  it("fetching multiple A answers FQDN #ttt", function()
     local host = "atest."..TEST_DOMAIN
-    local typ = resolver.TYPE_A
-
-    local answers = assert(client.resolve(host .. ".", { qtype = typ }))
+    local cli = assert(client_new({ nameservers = TEST_NSS, order = {"LAST", "A"}}))
+    local answers = assert(cli:resolve(host .. "."))
     assert.are.equal(#answers, 2)
     assert.are.equal(host, answers[1].name)
-    assert.are.equal(typ, answers[1].type)
+    assert.are.equal(resolver.TYPE_A, answers[1].type)
     assert.are.equal(host, answers[2].name)
-    assert.are.equal(typ, answers[2].type)
+    assert.are.equal(resolver.TYPE_A, answers[2].type)
   end)
 
-  it("fetching A answers redirected through 2 CNAME answerss (un-typed)", function()
-    assert(client.init({ search = {}, }))
-    local lrucache = cli.cache
-
+  it("fetching A answers redirected through 2 CNAME answerss (un-typed) #ttt", function()
     --[[
     This test might fail. Recurse flag is on by default. This means that the first return
     includes the cname answerss, but the second one (within the ttl) will only include the
@@ -720,19 +714,25 @@ describe("[DNS client]", function()
     This does not affect client side code, as the result is always the final A answers.
     --]]
 
+
+
+    writefile(resolv_path, "")  -- search {} empty
+
     local host = "smtp."..TEST_DOMAIN
     local typ = resolver.TYPE_A
-    local answers, _, _ = assert(client.resolve(host))
+
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local answers = assert(cli:resolve(host))
 
     -- check first CNAME
-    local key1 = resolver.TYPE_CNAME..":"..host
-    local entry1 = lrucache:get(key1)
+    local key1 = host .. ":" .. resolver.TYPE_CNAME
+    local entry1 = cli.cache:get(key1)
     assert.are.equal(host, entry1[1].name)       -- the 1st answers is the original 'smtp.'..TEST_DOMAIN
     assert.are.equal(resolver.TYPE_CNAME, entry1[1].type) -- and that is a CNAME
 
     -- check second CNAME
-    local key2 = resolver.TYPE_CNAME..":"..entry1[1].cname
-    local entry2 = lrucache:get(key2)
+    local key2 = entry1[1].cname .. ":" .. resolver.TYPE_CNAME
+    local entry2 = cli.cache:get(key2)
     assert.are.equal(entry1[1].cname, entry2[1].name) -- the 2nd is the middle 'thuis.'..TEST_DOMAIN
     assert.are.equal(resolver.TYPE_CNAME, entry2[1].type) -- and that is also a CNAME
 
@@ -743,13 +743,12 @@ describe("[DNS client]", function()
     assert.are.equal(#answers, 1)
 
     -- check last successful lookup references
-    local lastsuccess3 = lrucache:get(answers[1].name)
-    local lastsuccess2 = lrucache:get(entry2[1].name)
-    local lastsuccess1 = lrucache:get(entry1[1].name)
+    local lastsuccess3 = cli:get_last_type(answers[1].name)
+    local lastsuccess2 = cli:get_last_type(entry2[1].name)
+    local lastsuccess1 = cli:get_last_type(entry1[1].name)
     assert.are.equal(resolver.TYPE_A, lastsuccess3)
     assert.are.equal(resolver.TYPE_CNAME, lastsuccess2)
     assert.are.equal(resolver.TYPE_CNAME, lastsuccess1)
-
   end)
 
   it("fetching multiple SRV answerss (un-typed)", function()
@@ -771,8 +770,6 @@ describe("[DNS client]", function()
 
   it("fetching multiple SRV answerss through CNAME (un-typed)", function()
     assert(client.init({ search = {}, }))
-    local lrucache = cli.cache
-
     local host = "cname2srv."..TEST_DOMAIN
     local typ = resolver.TYPE_SRV
 
@@ -781,7 +778,7 @@ describe("[DNS client]", function()
 
     -- first check CNAME
     local key = resolver.TYPE_CNAME..":"..host
-    local entry = lrucache:get(key)
+    local entry = cli.cache:get(key)
     assert.are.equal(host, entry[1].name)
     assert.are.equal(resolver.TYPE_CNAME, entry[1].type)
 
@@ -828,8 +825,6 @@ describe("[DNS client]", function()
 
   it("fetching IPv4 address as A type", function()
     assert(client.init())
-    local lrucache = cli.cache
-
     local host = "1.2.3.4"
 
     local answers = assert(client.resolve(host, { qtype = resolver.TYPE_A }))
@@ -837,7 +832,7 @@ describe("[DNS client]", function()
     assert.are.equal(resolver.TYPE_A, answers[1].type)
     assert.are.equal(10*365*24*60*60, answers[1].ttl)  -- 10 year ttl
 
-    assert.equal(resolver.TYPE_A, lrucache:get(host))
+    assert.equal(resolver.TYPE_A, cli.cache:get(host))
   end)
 
   it("fetching IPv4 address as SRV type", function()
@@ -869,8 +864,7 @@ describe("[DNS client]", function()
     assert.are.equal(10*365*24*60*60, answers[1].ttl)  -- 10 year ttl
     assert.are.equal(host, answers[1].address)
 
-    local lrucache = cli.cache
-    assert.equal(resolver.TYPE_AAAA, lrucache:get(host))
+    assert.equal(resolver.TYPE_AAAA, cli.cache:get(host))
   end)
 
   it("fetching IPv6 address as AAAA type (without brackets)", function()
@@ -884,8 +878,7 @@ describe("[DNS client]", function()
     assert.are.equal(10*365*24*60*60, answers[1].ttl)  -- 10 year ttl
     assert.are.equal("["..host.."]", answers[1].address) -- brackets added
 
-    local lrucache = cli.cache
-    assert.equal(resolver.TYPE_AAAA, lrucache:get(host))
+    assert.equal(resolver.TYPE_AAAA, cli.cache:get(host))
   end)
 
   it("fetching IPv6 address as SRV type", function()
@@ -989,7 +982,6 @@ describe("[DNS client]", function()
         "nameserver 198.51.100.0",
       },
     }))
-    local lrucache = cli.cache
     local entry1 = {
       {
         type = resolver.TYPE_CNAME,
@@ -1002,7 +994,7 @@ describe("[DNS client]", function()
       expire = 0,
     }
     -- insert in the cache
-    lrucache:set(entry1[1].type..":"..entry1[1].name, entry1)
+    cli.cache:set(entry1[1].type..":"..entry1[1].name, entry1)
 
     -- Note: the bad case would be that the below lookup would hang due to round-robin on an empty table
     local cli, err, _ = client.resolve("hello.world", nil, true)
@@ -1017,7 +1009,6 @@ describe("[DNS client]", function()
         "nameserver 198.51.100.0",
       },
     }))
-    local lrucache = cli.cache
     local entry1 = {
       {
         type = resolver.TYPE_CNAME,
@@ -1041,8 +1032,8 @@ describe("[DNS client]", function()
       expire = 0,
     }
     -- insert in the cache
-    lrucache:set(entry1[1].type..":"..entry1[1].name, entry1)
-    lrucache:set(entry2[1].type..":"..entry2[1].name, entry2)
+    cli.cache:set(entry1[1].type..":"..entry1[1].name, entry1)
+    cli.cache:set(entry2[1].type..":"..entry2[1].name, entry2)
 
     -- Note: the bad case would be that the below lookup would hang due to round-robin on an empty table
     local cli, err, _ = client.resolve("hello.world", nil, true)
@@ -1062,8 +1053,7 @@ describe("[DNS client]", function()
       order = {"SRV", "CNAME", "A", "AAAA"},
     }))
 
-    local lrucache = cli.cache
-    assert.equal(resolver.TYPE_A, lrucache:get("localhost")) -- success set to A as it is the preferred option
+    assert.equal(resolver.TYPE_A, cli.cache:get("localhost")) -- success set to A as it is the preferred option
 
     assert(client.init(
     {
@@ -1071,8 +1061,8 @@ describe("[DNS client]", function()
       order = {"SRV", "CNAME", "AAAA", "A"},
     }))
 
-    lrucache = cli.cache
-    assert.equal(resolver.TYPE_AAAA, lrucache:get("localhost")) -- success set to AAAA as it is the preferred option
+    cli.cache = cli.cache
+    assert.equal(resolver.TYPE_AAAA, cli.cache:get("localhost")) -- success set to AAAA as it is the preferred option
   end)
 
 
@@ -1130,7 +1120,6 @@ describe("[DNS client]", function()
     end)
     it("SRV-answers, round-robin on lowest prio",function()
       assert(client.init())
-      local lrucache = cli.cache
       local host = "hello.world.test"
       local entry = {
         {
@@ -1167,7 +1156,7 @@ describe("[DNS client]", function()
         expire = ngx.now()+10,
       }
       -- insert in the cache
-      lrucache:set(entry[1].type..":"..entry[1].name, entry)
+      cli.cache:set(entry[1].type..":"..entry[1].name, entry)
 
       local results = {}
       for _ = 1,20 do
@@ -1182,7 +1171,6 @@ describe("[DNS client]", function()
     end)
     it("SRV-answers with 1 entry, round-robin",function()
       assert(client.init())
-      local lrucache = cli.cache
       local host = "hello.world"
       local entry = {
         {
@@ -1199,7 +1187,7 @@ describe("[DNS client]", function()
         expire = ngx.now()+10,
       }
       -- insert in the cache
-      lrucache:set(entry[1].type..":"..entry[1].name, entry)
+      cli.cache:set(entry[1].type..":"..entry[1].name, entry)
 
       -- repeated lookups, as the first will simply serve the first entry
       -- and the only second will setup the round-robin scheme, this is
@@ -1212,7 +1200,6 @@ describe("[DNS client]", function()
     end)
     it("SRV-answers with 0-weight, round-robin",function()
       assert(client.init())
-      local lrucache = cli.cache
       local host = "hello.world"
       local entry = {
         {
@@ -1249,7 +1236,7 @@ describe("[DNS client]", function()
         expire = ngx.now()+10,
       }
       -- insert in the cache
-      lrucache:set(entry[1].type..":"..entry[1].name, entry)
+      cli.cache:set(entry[1].type..":"..entry[1].name, entry)
 
       -- weight 0 will be weight 1, without any reduction in weight
       -- of the other ones.
@@ -1264,7 +1251,6 @@ describe("[DNS client]", function()
     end)
     it("port passing",function()
       assert(client.init())
-      local lrucache = cli.cache
       local entry_a = {
         {
           type = resolver.TYPE_A,
@@ -1291,8 +1277,8 @@ describe("[DNS client]", function()
         expire = ngx.now()+10,
       }
       -- insert in the cache
-      lrucache:set(entry_a[1].type..":"..entry_a[1].name, entry_a)
-      lrucache:set(entry_srv[1].type..":"..entry_srv[1].name, entry_srv)
+      cli.cache:set(entry_a[1].type..":"..entry_a[1].name, entry_a)
+      cli.cache:set(entry_srv[1].type..":"..entry_srv[1].name, entry_srv)
       local ip, port
       local host = "a.answers.test"
       ip,port = client.toip(host)
@@ -1376,9 +1362,8 @@ describe("[DNS client]", function()
           expire = ngx.now()+10,  -- active
         }
         -- insert in the cache
-        local lrucache = cli.cache
-        lrucache:set(A_entry[1].type..":"..A_entry[1].name, A_entry)
-        lrucache:set(AAAA_entry[1].type..":"..AAAA_entry[1].name, AAAA_entry)
+        cli.cache:set(A_entry[1].type..":"..A_entry[1].name, A_entry)
+        cli.cache:set(AAAA_entry[1].type..":"..AAAA_entry[1].name, AAAA_entry)
       end
       assert(client.init({order = {"AAAA", "A"}}))
       config()
@@ -1410,7 +1395,6 @@ describe("[DNS client]", function()
           "nameserver 198.51.100.0",
         },
       }))
-      local lrucache = cli.cache
       local entry1 = {
         {
           type = resolver.TYPE_CNAME,
@@ -1434,8 +1418,8 @@ describe("[DNS client]", function()
         expire = ngx.now()+10, -- active
       }
       -- insert in the cache
-      lrucache:set(entry1[1].type..":"..entry1[1].name, entry1)
-      lrucache:set(entry2[1].type..":"..entry2[1].name, entry2)
+      cli.cache:set(entry1[1].type..":"..entry1[1].name, entry1)
+      cli.cache:set(entry2[1].type..":"..entry2[1].name, entry2)
 
       -- Note: the bad case would be that the below lookup would hang due to round-robin on an empty table
       local ip, port, _ = client.toip("hello.world", 123, true)
