@@ -207,6 +207,7 @@ local function filter_unmatched_answers(qname, qtype, answers)
 
     for i = #answers, 1, -1 do
         local answer = answers[i]
+        answer.name = answer.name:lower()
 
         if answer.name ~= qname or answer.type ~= qtype then
             -- insert to unmatched
@@ -278,11 +279,13 @@ local function resolve_query(self, name, qtype, tries)
         return nil, "failed to instantiate the resolver: " .. err
     end
 
+    logerr("r:qeury:", name)
     local options = { additional_section = true, qtype = qtype }
     local answers, err, q_tries = r:query(name, options, {})
     if r.destroy then
         r:destroy()
     end
+    logerr("r:query:", json(answers))
 
     if not answers then
         log(tries, q_tries)
@@ -455,10 +458,10 @@ end
 --   `cache_only`: default `false`, retrieve data only from the internal cache
 --   `qtype`: specified query type instead of its own search types
 function _M:resolve(name, opts, tries)
-    local opts = opts or {}
-    local tries = tries or {}
-    assert(tries and opts)
-    --ngx.log(ngx.ERR, "resolve: ", name, ":", json(opts))
+    name = name:lower()
+    opts = opts or {}
+    tries = tries or {}
+
     local answers, err, tries = resolve_all(self, name, opts, tries)
     if not answers or not opts.return_random then
         return answers, err, tries

@@ -618,79 +618,60 @@ describe("[DNS client]", function()
     local typ = resolver.TYPE_CNAME
 
     local cli = assert(client_new({ nameservers = TEST_NS }))
-    local answers, _, tries = cli:resolve(host, { qtype = typ })
+    local answers = cli:resolve(host, { qtype = typ })
 
     assert.are.equal(host, answers[1].name)
     assert.are.equal(typ, answers[1].type)
     assert.are.equal(#answers, 1)
   end)
 
-  it("fetching a CNAME answers FQDN", function()
-    assert(client.init())
-
+  it("fetching CNAME answers FQDN #ttt", function()
     local host = "smtp."..TEST_DOMAIN
     local typ = resolver.TYPE_CNAME
 
-    local answers = assert(client.resolve(host .. ".", { qtype = typ }))
-    assert.are.equal(host, answers[1].name)
+    local cli = assert(client_new({ nameservers = TEST_NS }))
+    local answers, err, trier = cli:resolve(host .. ".", { qtype = typ })
+
+    assert.are.equal(host, answers[1].name) -- answers name does not contain "."
     assert.are.equal(typ, answers[1].type)
     assert.are.equal(#answers, 1)
   end)
 
-  it("expire and touch times", function()
-    assert(client.init())
+  it("cache hit and ttl #ttt", function()
+    local host = TEST_DOMAIN
 
-    local host = "txttest."..TEST_DOMAIN
-    local typ = resolver.TYPE_TXT
+    local cli = assert(client_new({ nameservers = TEST_NS }))
+    local answers = cli:resolve(host)
+    assert.are.equal(host, answers[1].name)
 
-    local answers, _, _ = assert(client.resolve(host, { qtype = typ }))
-
-    local now = gettime()
-    local touch_diff = math.abs(now - answers.touch)
-    local ttl_diff = math.abs((now + answers[1].ttl) - answers.expire)
-    assert(touch_diff < 0.01, "Expected difference to be near 0; "..
-    tostring(touch_diff))
-    assert(ttl_diff < 0.01, "Expected difference to be near 0; "..
-    tostring(ttl_diff))
-
-    sleep(1)
+    local wait_time = 1
+    ngx.sleep(wait_time)
 
     -- fetch again, now from cache
-    local oldtouch = answers.touch
-    local answers2 = assert(client.resolve(host, { qtype = typ }))
+    local answers2 = assert(cli:resolve(host))
+    assert.are.equal(answers, answers2) -- same table from L1 cache
 
-    assert.are.equal(answers, answers2) -- cached table, so must be same
-    assert.are.not_equal(oldtouch, answers.touch)
-
-    now = gettime()
-    touch_diff = math.abs(now - answers.touch)
-    ttl_diff = math.abs((now + answers[1].ttl) - answers.expire)
-    assert(touch_diff < 0.01, "Expected difference to be near 0; "..
-    tostring(touch_diff))
-    assert((0.990 < ttl_diff) and (ttl_diff < 1.01),
-    "Expected difference to be near 1; "..tostring(ttl_diff))
-
+    local ttl, err, value = cli.cache:peek(host)
+    assert.same(answers, value)
+    local ttl_diff = answers.ttl - ttl
+    assert(math.abs(ttl_diff - wait_time) < 1,
+           ("ttl diff:%s s should be near to %s s"):format(ttl_diff, wait_time))
   end)
 
-  it("fetching names case insensitive", function()
-    assert(client.init())
-
+  it("fetching names case insensitive #ttt", function()
     query_func = function(self, original_query_func, name, options)
-      return {
-        {
+      return {{
           name = "some.UPPER.case",
           type = resolver.TYPE_A,
           ttl = 30,
-        }
-      }
+        }}
     end
+    writefile(resolv_path, "nameserver 198.51.100.0")
+    local cli = assert(client_new())
+    local answers = cli:resolve("some.upper.CASE")
 
-    local res, _, _ = client.resolve(
-    "some.upper.CASE",
-    { qtype = resolver.TYPE_A },
-    false)
-    assert.equal(1, #res)
-    assert.equal("some.upper.case", res[1].name)
+    assert.equal(1, #answers)
+    assert.equal("some.upper.case", answers[1].name)
   end)
 
   it("fetching multiple A answerss", function()
@@ -1183,7 +1164,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10,
+        expire = ngx.now()+10,
       }
       -- insert in the cache
       lrucache:set(entry[1].type..":"..entry[1].name, entry)
@@ -1215,7 +1196,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10,
+        expire = ngx.now()+10,
       }
       -- insert in the cache
       lrucache:set(entry[1].type..":"..entry[1].name, entry)
@@ -1265,7 +1246,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10,
+        expire = ngx.now()+10,
       }
       -- insert in the cache
       lrucache:set(entry[1].type..":"..entry[1].name, entry)
@@ -1293,7 +1274,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10,
+        expire = ngx.now()+10,
       }
       local entry_srv = {
         {
@@ -1307,7 +1288,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10,
+        expire = ngx.now()+10,
       }
       -- insert in the cache
       lrucache:set(entry_a[1].type..":"..entry_a[1].name, entry_a)
@@ -1381,7 +1362,7 @@ describe("[DNS client]", function()
             ttl = 10,
           },
           touch = 0,
-          expire = gettime()+10,  -- active
+          expire = ngx.now()+10,  -- active
         }
         local AAAA_entry = {
           {
@@ -1392,7 +1373,7 @@ describe("[DNS client]", function()
             ttl = 10,
           },
           touch = 0,
-          expire = gettime()+10,  -- active
+          expire = ngx.now()+10,  -- active
         }
         -- insert in the cache
         local lrucache = cli.cache
@@ -1439,7 +1420,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10, -- active
+        expire = ngx.now()+10, -- active
       }
       local entry2 = {
         {
@@ -1450,7 +1431,7 @@ describe("[DNS client]", function()
           ttl = 10,
         },
         touch = 0,
-        expire = gettime()+10, -- active
+        expire = ngx.now()+10, -- active
       }
       -- insert in the cache
       lrucache:set(entry1[1].type..":"..entry1[1].name, entry1)
@@ -1498,7 +1479,7 @@ describe("[DNS client]", function()
     )
 
     assert.equal(validTtl, res1[1].ttl)
-    assert.is_near(validTtl, res1.expire - gettime(), 0.1)
+    assert.is_near(validTtl, res1.expire - ngx.now(), 0.1)
   end)
 
   it("verifies ttl and caching of empty responses and name errors", function()
@@ -1732,7 +1713,7 @@ describe("[DNS client]", function()
             ttl = 10,
           },
           touch = 0,
-          expire = gettime() + 10,
+          expire = ngx.now() + 10,
         }
         -- wait before we return the results
         -- `+ 2` s ensures that the semaphore:wait() expires
