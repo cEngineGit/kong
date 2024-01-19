@@ -713,9 +713,6 @@ describe("[DNS client]", function()
 
     This does not affect client side code, as the result is always the final A answers.
     --]]
-
-
-
     writefile(resolv_path, "")  -- search {} empty
 
     local host = "smtp."..TEST_DOMAIN
@@ -767,16 +764,17 @@ describe("[DNS client]", function()
     assert.are.equal(#answers, 3)
   end)
 
-  it("fetching multiple SRV answerss through CNAME (un-typed)", function()
-    assert(client.init({ search = {}, }))
+  it("fetching multiple SRV answerss through CNAME (un-typed) #ttt", function()
+    writefile(resolv_path, "")  -- search {} empty
     local host = "cname2srv."..TEST_DOMAIN
     local typ = resolver.TYPE_SRV
 
     -- un-typed lookup
-    local answers = assert(client.resolve(host))
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local answers = assert(cli:resolve(host))
 
     -- first check CNAME
-    local key = resolver.TYPE_CNAME..":"..host
+    local key = host .. ":" .. resolver.TYPE_CNAME
     local entry = cli.cache:get(key)
     assert.are.equal(host, entry[1].name)
     assert.are.equal(resolver.TYPE_CNAME, entry[1].type)
@@ -791,20 +789,16 @@ describe("[DNS client]", function()
     assert.are.equal(#answers, 3)
   end)
 
-  it("fetching non-type-matching answerss", function()
-    assert(client.init({
-      -- don't supply resolvConf and fallback to default resolver
-      -- so that CI and docker can have reliable results
-      -- but remove `search` and `domain`
-      search = {},
-    }))
+  it("fetching non-type-matching answerss #ttt", function()
+    writefile(resolv_path, "")  -- search {} empty
 
     local host = "srvtest."..TEST_DOMAIN
     local typ = resolver.TYPE_A   --> the entry is SRV not A
 
-    local answers, err, _ = client.resolve(host, {qtype = typ})
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local answers, err = cli:resolve(host, { qtype = typ })
     assert.is_nil(answers)  -- returns nil
-    assert.equal(EMPTY_ERROR, err)
+    assert.same("no available records", err)
   end)
 
   it("fetching non-existing answerss", function()
