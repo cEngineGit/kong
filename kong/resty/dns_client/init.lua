@@ -235,7 +235,7 @@ local function process_answers_fields(self, answers)
             if answer.type == TYPE_AAAA then
                 answer.address = utils.ipv6_bracket(answer.address)
             elseif answer.type == TYPE_SRV then
-                answer.target = utils.ipv6_brakcet(answer.target)
+                answer.target = utils.ipv6_bracket(answer.target)
             end
 
             ttl = math_min(ttl, answer.ttl)

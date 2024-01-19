@@ -751,14 +751,13 @@ describe("[DNS client]", function()
     assert.are.equal(resolver.TYPE_CNAME, lastsuccess1)
   end)
 
-  it("fetching multiple SRV answerss (un-typed)", function()
-    assert(client.init())
-
+  it("fetching multiple SRV answerss (un-typed) #ttt", function()
     local host = "srvtest."..TEST_DOMAIN
     local typ = resolver.TYPE_SRV
 
     -- un-typed lookup
-    local answers = assert(client.resolve(host))
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local answers = assert(cli:resolve(host))
     assert.are.equal(host, answers[1].name)
     assert.are.equal(typ, answers[1].type)
     assert.are.equal(host, answers[2].name)
