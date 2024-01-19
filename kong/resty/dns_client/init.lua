@@ -24,14 +24,18 @@ local DEFAULT_EMPTY_TTL = 30
 
 local DEFAULT_ORDER = { "LAST", "SRV", "A", "AAAA", "CNAME" }
 
-local TYPE_LAST = -1
+local TYPE_SRV      = resolver.TYPE_SRV
+local TYPE_A        = resolver.TYPE_A
+local TYPE_AAAA     = resolver.TYPE_AAAA
+local TYPE_CNAME    = resolver.TYPE_CNAME
+local TYPE_LAST     = -1
 
 local valid_types = {
-    SRV = resolver.TYPE_SRV,
-    A = resolver.TYPE_A,
-    AAAA = resolver.TYPE_AAAA,
-    CNAME = resolver.TYPE_CNAME,
-    LAST = TYPE_LAST,
+    SRV     = TYPE_SRV,
+    A       = TYPE_A,
+    AAAA    = TYPE_AAAA,
+    CNAME   = TYPE_CNAME,
+    LAST    = TYPE_LAST,
 }
 
 local hitstrs = {
@@ -75,7 +79,6 @@ local function init_hosts(cache, path, preferred_ip_type)
           ipv4 = "127.0.0.1",
           ipv6 = "[::1]",
         }
-        ngx.log(ngx.WARN, "Insert : ipv4/6")
     end
 
     local function insert_answer(name, qtype, address)
@@ -97,13 +100,13 @@ local function init_hosts(cache, path, preferred_ip_type)
     for name, address in pairs(hosts) do
         name = name:lower()
         if address.ipv4 then
-            insert_answer(name, resolver.TYPE_A, address.ipv4)
-            insert_last_type(cache, name, resolver.TYPE_A)
+            insert_answer(name, TYPE_A, address.ipv4)
+            insert_last_type(cache, name, TYPE_A)
         end
         if address.ipv6 then
-            insert_answer(name, resolver.TYPE_AAAA, address.ipv6)
-            if not address.ipv4 or preferred_ip_type == resolver.TYPE_AAAA then
-                insert_last_type(cache, name, resolver.TYPE_AAAA)
+            insert_answer(name, TYPE_AAAA, address.ipv6)
+            if not address.ipv4 or preferred_ip_type == TYPE_AAAA then
+                insert_last_type(cache, name, TYPE_AAAA)
             end
         end
     end
@@ -164,7 +167,7 @@ function _M.new(opts)
             return nil, "Invalid dns record type in order array: " .. typstr
         end
         table_insert(search_types, qtype)
-        if (qtype == resolver.TYPE_A or qtype == resolver.TYPE_AAAA) and
+        if (qtype == TYPE_A or qtype == TYPE_AAAA) and
             not preferred_ip_type
         then
             preferred_ip_type = qtype
@@ -175,7 +178,7 @@ function _M.new(opts)
         return nil, "Invalid order array: empty record types"
     end
 
-    preferred_ip_type = preferred_ip_type or resolver.TYPE_A
+    preferred_ip_type = preferred_ip_type or TYPE_A
 
     -- parse hosts
     local hosts = init_hosts(cache, opts.hosts, preferred_ip_type)
@@ -228,9 +231,9 @@ local function process_answers_fields(self, answers)
 
         for _, answer in ipairs(answers) do
             -- A compromise regarding https://github.com/Kong/kong/pull/3088
-            if answer.type == resolver.TYPE_AAAA then
+            if answer.type == TYPE_AAAA then
                 answer.address = utils.ipv6_bracket(answer.address)
-            elseif answer.type == resolver.TYPE_SRV then
+            elseif answer.type == TYPE_SRV then
                 answer.target = utils.ipv6_brakcet(answer.target)
             end
 
@@ -275,7 +278,6 @@ local function resolve_query(self, name, qtype, tries)
         return nil, "failed to instantiate the resolver: " .. err
     end
 
-    logerr("query:", name)
     local options = { additional_section = true, qtype = qtype }
     local answers, err, q_tries = r:query(name, options, {})
     if r.destroy then
@@ -307,7 +309,6 @@ end
 
 
 local function resolve_name_type_callback(self, name, qtype, opts, tries)
-    logerr("cb:", name, qtype)
     local key = name .. ":" .. qtype
 
     local ttl, err, answers, stale = self.cache:peek(key, true)
@@ -355,7 +356,6 @@ local function resolve_name_type(self, name, qtype, opts, tries)
         return nil, "recursion detected for name: " .. name
     end
 
-    logerr("l2 cache get:", key)
     local answers, err, hit_level = self.cache:get(key, nil,
                                                 resolve_name_type_callback,
                                                 self, name, qtype, opts, tries)
@@ -373,11 +373,12 @@ local function resolve_name_type(self, name, qtype, opts, tries)
 end
 
 
-local function search_types(self, name)
-    local types = {}
+local function search_types(self, name, qtype)
+    local input_types = qtype and { qtype } or self.search_types
     local checked_types = {}
+    local types = {}
 
-    for _, qtype in ipairs(self.search_types) do
+    for _, qtype in ipairs(input_types) do
         if qtype == TYPE_LAST then
             qtype = get_last_type(self.cache, name)
         end
@@ -387,21 +388,18 @@ local function search_types(self, name)
         end
     end
 
-    logerr("search types:", json(types))
     return types
 end
 
 
 local function resolve_names_and_types(self, name, opts, tries)
-    local types = search_types(self, name)
+    local types = search_types(self, name, opts.qtype)
     local names = utils.search_names(name, self.resolv, self.hosts)
     local answers, err
 
     for _, qtype in ipairs(types) do
         for _, qname in ipairs(names) do
-            logerr(" resovle_name_type:", qname .. ":" .. qtype)
             answers, err = resolve_name_type(self, qname, qtype, opts, tries)
-            logerr(" resolve_name_tyep return: ", json(answers), " :", err)
 
             -- severe error occurred
             if not answers then
@@ -434,13 +432,12 @@ local function resolve_all(self, name, opts, tries)
         if answers then
             self.cache:set(name, { ttl = answers.ttl }, answers)
         end
-
     else
         log(tries, hitstrs[hit_level])
     end
 
     -- dereference CNAME
-    if answers and answers[1].type == resolver.TYPE_CNAME then
+    if opts.qtype ~= TYPE_CNAME and answers and answers[1].type == TYPE_CNAME then
         log(tries, "cname")
         return resolve_all(self, answers[1].cname, opts, tries)
     end
@@ -456,6 +453,7 @@ end
 -- @opts:
 --   `return_random`: default `false`, return only one random IP address
 --   `cache_only`: default `false`, retrieve data only from the internal cache
+--   `qtype`: specified query type instead of its own search types
 function _M:resolve(name, opts, tries)
     local opts = opts or {}
     local tries = tries or {}
@@ -467,7 +465,7 @@ function _M:resolve(name, opts, tries)
     end
 
     -- option: return_random
-    if answers[1].type == resolver.TYPE_SRV then
+    if answers[1].type == TYPE_SRV then
         local answer = utils.get_wrr_ans(answers)
         opts.port = answer.port ~= 0 and answer.port or opts.port
         return self:resolve(answer.target, opts, tries)
