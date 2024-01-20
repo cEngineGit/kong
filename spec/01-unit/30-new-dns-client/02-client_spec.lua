@@ -790,30 +790,24 @@ describe("[DNS client]", function()
   end)
 
   it("fetching non-type-matching answerss #ttt", function()
-    writefile(resolv_path, "")  -- search {} empty
-
     local host = "srvtest."..TEST_DOMAIN
     local typ = resolver.TYPE_A   --> the entry is SRV not A
 
+    writefile(resolv_path, "")  -- search {} empty
     local cli = assert(client_new({ nameservers = TEST_NSS}))
     local answers, err = cli:resolve(host, { qtype = typ })
     assert.is_nil(answers)  -- returns nil
     assert.same("no available records", err)
   end)
 
-  it("fetching non-existing answerss", function()
-    assert(client.init({
-      -- don't supply resolvConf and fallback to default resolver
-      -- so that CI and docker can have reliable results
-      -- but remove `search` and `domain`
-      search = {},
-    }))
-
+  it("fetching non-existing answerss #ttt", function()
     local host = "IsNotHere."..TEST_DOMAIN
 
-    local answers, err, _ = client.resolve(host)
+    writefile(resolv_path, "")  -- search {} empty
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local answers, err = cli:resolve(host)
     assert.is_nil(answers)
-    assert.equal(NOT_FOUND_ERROR, err)
+    assert.equal("no available records", err)
   end)
 
   it("fetching IPv4 address as A type", function()
