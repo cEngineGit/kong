@@ -11,12 +11,22 @@ return {
               description = "Array of valid patterns, or valid questions from the 'user' role in chat.",
               type = "array",
               default = {},
-              elements = { type = "string" } } },
+              len_max = 10,
+              elements = {
+                type = "string",
+                len_min = 1,
+                len_max = 50,
+              }}},
           { deny_patterns = {
               description = "Array of invalid patterns, or invalid questions from the 'user' role in chat.",
               type = "array",
               default = {},
-              elements = { type = "string" } } },
+              len_max = 10,
+              elements = {
+                type = "string",
+                len_min = 1,
+                len_max = 50,
+              }}},
           { allow_all_conversation_history = {
               description = "If true, will ignore all previous chat prompts from the conversation history.",
               type = "boolean",

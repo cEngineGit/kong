@@ -2,14 +2,18 @@ local _M = {}
 
 -- imports
 local kong_meta = require "kong.meta"
-local fmt       = string.format
+local buffer    = require("string.buffer")
 --
 
 _M.PRIORITY = 771
 _M.VERSION = kong_meta.version
 
-local function bad_request(msg)
+local function bad_request(msg, reveal_msg_to_client)
+  -- don't let users know 'ai-prompt-guard' is in use
   kong.log.warn(msg)
+  if not reveal_msg_to_client then
+    msg = "bad request"
+  end
   return kong.response.exit(400, { error = { message = msg } })
 end
 
@@ -18,12 +22,15 @@ function _M.execute(request, conf)
 
   -- concat all 'user' prompts into one string, if allowed
   if request.messages and not conf.allow_all_conversation_history then
+    local buf = buffer.new()
+
     for k, v in ipairs(request.messages) do
       if v.role == "user" then
-        if not user_prompt then user_prompt = "" end
-        user_prompt = fmt("%s %s", user_prompt, v.content)
+        buf:put(v.content)
       end
     end
+
+    user_prompt = buf:get()
   elseif request.messages then
     -- just take the trailing 'user' prompt
     for k, v in ipairs(request.messages) do
@@ -45,10 +52,14 @@ function _M.execute(request, conf)
   if conf.deny_patterns and #conf.deny_patterns > 0 then
     for i, v in ipairs(conf.deny_patterns) do
       -- check each denylist; if prompt matches it, deny immediately
-      local m, err = ngx.re.match(user_prompt, v)
-      if err then return false, "bad regex execution for: " .. v end
+      local m, _, err = ngx.re.find(user_prompt, v, "jo")
+      if err then
+        return false, "bad regex execution for: " .. v
+      end
 
-      if m then return false, "prompt pattern is blocked" end
+      if m then
+        return false, "prompt pattern is blocked"
+      end
     end
   end
 
@@ -58,14 +69,21 @@ function _M.execute(request, conf)
 
     for i, v in ipairs(conf.allow_patterns) do
       -- check each denylist; if prompt matches it, deny immediately
-      local m, err = ngx.re.match(user_prompt, v)
+      local m, _, err = ngx.re.find(user_prompt, v, "jo")
 
-      if err then return false, "bad regex execution for: " .. v end
+      if err then
+        return false, "bad regex execution for: " .. v
+      end
 
-      if m then valid = true end
+      if m then
+        valid = true
+        break
+      end
     end
 
-    if not valid then return false, "prompt doesn't match any allowed pattern" end
+    if not valid then
+      return false, "prompt doesn't match any allowed pattern"
+    end
   end
 
   return true, nil
@@ -73,24 +91,19 @@ end
 
 function _M:access(conf)
   kong.service.request.enable_buffering()
-  kong.ctx.shared.prompt_guarded = true
+  kong.ctx.shared.ai_prompt_guarded = true -- future use
 
   -- if plugin ordering was altered, receive the "decorated" request
-  local request, err
-  if not kong.ctx.replacement_request then
-    request, err = kong.request.get_body("application/json")
+  local request, err = kong.request.get_body("application/json")
 
-    if err then
-      bad_request("ai-prompt-guard only supports application/json requests")
-    end
-  else
-    request = kong.ctx.replacement_request
+  if err then
+    return bad_request("this LLM route only supports application/json requests", true)
   end
 
   -- run access handler
   local ok, err = self.execute(request, conf)
   if not ok then
-    return bad_request(err)
+    return bad_request(err, false)
   end
 end
 

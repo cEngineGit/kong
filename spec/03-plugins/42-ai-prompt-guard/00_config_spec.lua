@@ -37,4 +37,44 @@ describe(PLUGIN_NAME .. ": (schema)", function()
     assert.not_nil(err)
     assert.equal("must set one item in either [allow_patterns] or [deny_patterns]", err["@entity"][1])
   end)
+
+  it("won't allow patterns that are too long", function()
+    local config = {
+      allow_all_conversation_history = true,
+      allow_patterns = {
+        [1] = "123456789012345678901234567890123456789012345678901" -- 51
+      },
+    }
+
+    local ok, err = validate(config)
+
+    assert.is_falsy(ok)
+    assert.not_nil(err)
+    assert.same({ config = {allow_patterns = { [1] = "length must be at most 50" }}}, err)
+  end)
+
+  it("won't allow too many array items", function()
+    local config = {
+      allow_all_conversation_history = true,
+      allow_patterns = {
+        [1] = "pattern",
+        [2] = "pattern",
+        [3] = "pattern",
+        [4] = "pattern",
+        [5] = "pattern",
+        [6] = "pattern",
+        [7] = "pattern",
+        [8] = "pattern",
+        [9] = "pattern",
+        [10] = "pattern",
+        [11] = "pattern",
+      },
+    }
+
+    local ok, err = validate(config)
+
+    assert.is_falsy(ok)
+    assert.not_nil(err)
+    assert.same({ config = {allow_patterns = "length must be at most 10" }}, err)
+  end)
 end)
