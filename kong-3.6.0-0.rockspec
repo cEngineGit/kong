@@ -565,6 +565,9 @@ build = {
     ["kong.plugins.ai-proxy.handler"] = "kong/plugins/ai-proxy/handler.lua",
     ["kong.plugins.ai-proxy.schema"] = "kong/plugins/ai-proxy/schema.lua",
 
+    ["kong.plugins.reconfiguration-completion.handler"] = "kong/plugins/reconfiguration-completion/handler.lua",
+    ["kong.plugins.reconfiguration-completion.schema"] = "kong/plugins/reconfiguration-completion/schema.lua",
+
     ["kong.llm"] = "kong/llm/init.lua",
     ["kong.llm.drivers.shared"] = "kong/llm/drivers/shared.lua",
     ["kong.llm.drivers.openai"] = "kong/llm/drivers/openai.lua",

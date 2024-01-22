@@ -52,6 +52,7 @@ describe("Plugins", function()
     -- backwards-compatibility
 
     local order = {
+      "reconfiguration-completion",
       "pre-function",
       "zipkin",
       "bot-detection",
