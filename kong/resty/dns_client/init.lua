@@ -75,12 +75,12 @@ end
 
 
 local function insert_last_type(cache, name, qtype)
-    cache:set(name .. ":l", { ttl = 0 }, qtype)
+    cache:set("last:" .. name, { ttl = 0 }, qtype)
 end
 
 
 local function get_last_type(cache, name)
-    return cache:get(name .. ":l")
+    return cache:get("last:" .. name)
 end
 
 
@@ -188,18 +188,15 @@ function _M.new(opts)
             return nil, "Invalid dns record type in order array: " .. typstr
         end
         table_insert(search_types, qtype)
-        if (qtype == TYPE_A or qtype == TYPE_AAAA) and
-            not preferred_ip_type
-        then
+        if (qtype == TYPE_A or qtype == TYPE_AAAA) and not preferred_ip_type then
             preferred_ip_type = qtype
         end
     end
+    preferred_ip_type = preferred_ip_type or TYPE_A
 
     if #search_types == 0 then
         return nil, "Invalid order array: empty record types"
     end
-
-    preferred_ip_type = preferred_ip_type or TYPE_A
 
     -- parse hosts
     local hosts = init_hosts(cache, opts.hosts, preferred_ip_type)
@@ -421,14 +418,29 @@ local function get_search_types(self, name, qtype)
 end
 
 
+local function check_and_get_ip_answers(name)
+    if name:match("^%d+%.%d+%.%d+%.%d+$") then      -- IPv4
+        return {{ address = name, type = TYPE_A, class = 1, name = name }}
+    end
+
+    if name:match(":") then                         -- IPv6
+        return {{ address = utils.ipv6_bracket(name), type = TYPE_AAAA, class = 1, name = name }}
+    end
+end
+
+
 local function resolve_names_and_types(self, name, opts, tries)
+    local answers = check_and_get_ip_answers(name)
+    if answers then
+        return answers, nil, tries
+    end
+
     local types = get_search_types(self, name, opts.qtype)
     local names = utils.search_names(name, self.resolv, self.hosts)
-    local answers, err
 
     for _, qtype in ipairs(types) do
         for _, qname in ipairs(names) do
-            answers, err = resolve_name_type(self, qname, qtype, opts, tries)
+            local answers, err = resolve_name_type(self, qname, qtype, opts, tries)
 
             -- severe error occurred
             if not answers then
@@ -456,25 +468,18 @@ local function resolve_all(self, name, opts, tries)
     stats_incr(self.stats, name, "runs")
 
     --log(tries, name)
-
-    -- lookup fastly: no callback, which is only used for real network query
-    local answers, err, hit_level = self.cache:get(name)
+    -- lookup fastly with the key `fast:<qname>:<qtype>/all`
+    local key = "fast:" .. name .. ":" .. (opts.qtype or "all")
+    local answers, err, hit_level = self.cache:get(key)
     if not answers then
-        if name:match("^%d+%.%d+%.%d+%.%d+$") then      -- IPv4
-            return {{ address = name, type = TYPE_A, class = 1, name = name }}
-        end
-
-        if name:match(":") then                         -- IPv6
-            return {{ address = utils.ipv6_bracket(name), type = TYPE_AAAA, class = 1, name = name }}
-        end
-
         answers, err, tries = resolve_names_and_types(self, name, opts, tries)
-        if answers then
-            self.cache:set(name, { ttl = answers.ttl }, answers)
+        if not opts.cache_only and answers then
+            self.cache:set(key, { ttl = answers.ttl }, answers)
         end
+
     else
         stats_incr(self.stats, name, hitstrs[hit_level])
-    --else log(tries, hitstrs[hit_level])
+        --log(tries, hitstrs[hit_level])
     end
 
     -- dereference CNAME

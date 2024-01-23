@@ -639,7 +639,7 @@ describe("[DNS client]", function()
     assert.are.equal(#answers, 1)
   end)
 
-  it("cache hit and ttl #ttt", function()
+  it("cache hit and ttl", function()
     -- TOOD: special answers with ttl 0
     -- [{"name":"kong-gateway-testing.link","class":1,"address":"198.51.100.0","ttl":0,"type":1,"section":1}],
     local host = TEST_DOMAIN
@@ -831,7 +831,7 @@ describe("[DNS client]", function()
     assert.same(answers[1].address, host)
   end)
 
-  it("fetching IPv6 in an SRV answers adds brackets",function()
+  it("fetching IPv6 in an SRV answers adds brackets #ttt",function()
     local host = "hello.world"
     local address = "::1"
     local entry = {{
@@ -853,154 +853,116 @@ describe("[DNS client]", function()
     end
 
     local cli = assert(client_new({ nameservers = TEST_NSS}))
-    local res, _, _ = cli:cesolve( host, { qtype = resolver.TYPE_SRV })
-    assert.equal("["..address.."]", res[1].target)
+    local answers = cli:resolve( host, { qtype = resolver.TYPE_SRV })
+    assert.equal("["..address.."]", answers[1].target)
   end)
 
-  it("recursive lookups failure - single resolve", function()
-    assert(client.init({
-      resolvConf = {
-        -- resolv.conf without `search` and `domain` options
-        "nameserver 198.51.100.0",
-      },
-    }))
+  it("recursive lookups failure - single resolve #ttt", function()
     query_func = function(self, original_query_func, name, opts)
       if name ~= "hello.world" and (opts or {}).qtype ~= resolver.TYPE_CNAME then
         return original_query_func(self, name, opts)
       end
-      return {
-        {
-          type = resolver.TYPE_CNAME,
-          cname = "hello.world",
-          class = 1,
-          name = "hello.world",
-          ttl = 30,
-        },
-      }
+      return {{
+        type = resolver.TYPE_CNAME,
+        cname = "hello.world",
+        class = 1,
+        name = "hello.world",
+        ttl = 30,
+      }}
     end
 
-    local cli, err, _ = client.resolve("hello.world")
-    assert.is_nil(cli)
-    assert.are.equal("recursion detected", err)
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local answers, err, _ = cli:resolve("hello.world")
+    assert.is_nil(answers)
+    assert.are.equal("recursion detected for name: hello.world", err)
   end)
 
-  it("recursive lookups failure - single", function()
-    assert(client.init({
-      resolvConf = {
-        -- resolv.conf without `search` and `domain` options
-        "nameserver 198.51.100.0",
-      },
-    }))
-    local entry1 = {
-      {
+  it("recursive lookups failure - single #ttt", function()
+    local entry1 = {{
         type = resolver.TYPE_CNAME,
         cname = "hello.world",
         class = 1,
         name = "hello.world",
         ttl = 0,
-      },
-      touch = 0,
-      expire = 0,
-    }
-    -- insert in the cache
-    cli.cache:set(entry1[1].type..":"..entry1[1].name, entry1)
+      }}
 
     -- Note: the bad case would be that the below lookup would hang due to round-robin on an empty table
-    local cli, err, _ = client.resolve("hello.world", nil, true)
-    assert.is_nil(cli)
-    assert.are.equal("recursion detected", err)
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    -- insert in the cache
+    cli.cache:set(entry1[1].name .. ":" .. entry1[1].type, { ttl = 0 }, entry1)
+    local answers, err, _ = cli:resolve("hello.world", { cache_only = true})
+    assert.is_nil(answers)
+    assert.are.equal("recursion detected for name: hello.world", err)
   end)
 
-  it("recursive lookups failure - multi", function()
-    assert(client.init({
-      resolvConf = {
-        -- resolv.conf without `search` and `domain` options
-        "nameserver 198.51.100.0",
-      },
-    }))
-    local entry1 = {
-      {
-        type = resolver.TYPE_CNAME,
-        cname = "bye.bye.world",
-        class = 1,
-        name = "hello.world",
-        ttl = 0,
-      },
-      touch = 0,
-      expire = 0,
-    }
-    local entry2 = {
-      {
-        type = resolver.TYPE_CNAME,
-        cname = "hello.world",
-        class = 1,
-        name = "bye.bye.world",
-        ttl = 0,
-      },
-      touch = 0,
-      expire = 0,
-    }
-    -- insert in the cache
-    cli.cache:set(entry1[1].type..":"..entry1[1].name, entry1)
-    cli.cache:set(entry2[1].type..":"..entry2[1].name, entry2)
+  it("recursive lookups failure - multi #ttt", function()
+    local entry1 = {{
+      type = resolver.TYPE_CNAME,
+      cname = "bye.bye.world",
+      class = 1,
+      name = "hello.world",
+      ttl = 0,
+    }}
+    local entry2 = {{
+      type = resolver.TYPE_CNAME,
+      cname = "hello.world",
+      class = 1,
+      name = "bye.bye.world",
+      ttl = 0,
+    }}
 
     -- Note: the bad case would be that the below lookup would hang due to round-robin on an empty table
-    local cli, err, _ = client.resolve("hello.world", nil, true)
-    assert.is_nil(cli)
-    assert.are.equal("recursion detected", err)
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    -- insert in the cache
+    cli.cache:set(entry1[1].name .. ":" .. entry1[1].type, { ttl = 0 }, entry1)
+    cli.cache:set(entry2[1].name .. ":" .. entry2[1].type, { ttl = 0 }, entry2)
+    local answers, err, _ = cli:resolve("hello.world", { cache_only = true })
+    assert.is_nil(answers)
+    assert.are.equal("recursion detected for name: hello.world", err)
   end)
 
-  it("resolving from the /etc/hosts file; preferred A or AAAA order", function()
-    local f = tempfilename()
-    writefile(f, [[
-    127.3.2.1 localhost
-    1::2 localhost
-    ]])
-    assert(client.init(
-    {
-      hosts = f,
-      order = {"SRV", "CNAME", "A", "AAAA"},
+  it("resolving from the /etc/hosts file; preferred A or AAAA order #ttt", function()
+    writefile(hosts_path, {
+      "127.3.2.1 localhost",
+      "1::2 localhost",
+    })
+    local cli = assert(client_new({
+      nameservers = TEST_NSS,
+      order = {"SRV", "CNAME", "A", "AAAA"}
     }))
+    assert.equal(resolver.TYPE_A, cli:get_last_type("localhost")) -- success set to A as it is the preferred option
 
-    assert.equal(resolver.TYPE_A, cli.cache:get("localhost")) -- success set to A as it is the preferred option
-
-    assert(client.init(
-    {
-      hosts = f,
-      order = {"SRV", "CNAME", "AAAA", "A"},
+    local cli = assert(client_new({
+      nameservers = TEST_NSS,
+      order = {"SRV", "CNAME", "AAAA", "A"}
     }))
-
-    cli.cache = cli.cache
-    assert.equal(resolver.TYPE_AAAA, cli.cache:get("localhost")) -- success set to AAAA as it is the preferred option
+    assert.equal(resolver.TYPE_AAAA, cli:get_last_type("localhost")) -- success set to AAAA as it is the preferred option
   end)
 
 
-  it("resolving from the /etc/hosts file", function()
-    local f = tempfilename()
-    writefile(f, [[
-    127.3.2.1 localhost
-    1::2 localhost
+  it("resolving from the /etc/hosts file #ttt", function()
+    writefile(hosts_path, {
+      "127.3.2.1 localhost",
+      "1::2 localhost",
+      "123.123.123.123 mashape",
+      "1234::1234 kong.for.president",
+    })
 
-    123.123.123.123 mashape
-    1234::1234 kong.for.president
-    ]])
+    local cli = assert(client_new({ nameservers = TEST_NSS }))
 
-    assert(client.init({ hosts = f }))
-    os.remove(f)
-
-    local answers, err = client.resolve("localhost", {qtype = resolver.TYPE_A})
+    local answers, err = cli:resolve("localhost", {qtype = resolver.TYPE_A})
     assert.is.Nil(err)
     assert.are.equal(answers[1].address, "127.3.2.1")
 
-    answers, err = client.resolve("localhost", {qtype = resolver.TYPE_AAAA})
+    answers, err = cli:resolve("localhost", {qtype = resolver.TYPE_AAAA})
     assert.is.Nil(err)
     assert.are.equal(answers[1].address, "[1::2]")
 
-    answers, err = client.resolve("mashape", {qtype = resolver.TYPE_A})
+    answers, err = cli:resolve("mashape", {qtype = resolver.TYPE_A})
     assert.is.Nil(err)
     assert.are.equal(answers[1].address, "123.123.123.123")
 
-    answers, err = client.resolve("kong.for.president", {qtype = resolver.TYPE_AAAA})
+    answers, err = cli:resolve("kong.for.president", {qtype = resolver.TYPE_AAAA})
     assert.is.Nil(err)
     assert.are.equal(answers[1].address, "[1234::1234]")
   end)
@@ -1009,7 +971,7 @@ describe("[DNS client]", function()
     it("A/AAAA-answers, round-robin",function()
       assert(client.init({ search = {}, }))
       local host = "atest."..TEST_DOMAIN
-      local answers = assert(client.resolve(host))
+      local answers = assert(cli:resolve(host))
       answers.last_index = nil -- make sure to clean
       local ips = {}
       for _,rec in ipairs(answers) do ips[rec.address] = true end
@@ -1231,7 +1193,7 @@ describe("[DNS client]", function()
 
       -- resolve SRV specific should return the answers including its
       -- recursive entry
-      answers, err, _ = client.resolve(host, { qtype = resolver.TYPE_SRV })
+      answers, err, _ = cli:resolve(host, { qtype = resolver.TYPE_SRV })
       assert.is_table(answers)
       assert.equal(1, #answers)
       assert.equal(host, answers[1].target)
@@ -1366,7 +1328,7 @@ describe("[DNS client]", function()
     end
 
     -- do a query
-    local res1, _, _ = client.resolve(
+    local res1, _, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1399,7 +1361,7 @@ describe("[DNS client]", function()
 
     -- make a first request, populating the cache
     local res1, res2, err1, err2, _
-    res1, err1, _ = client.resolve(
+    res1, err1, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1410,7 +1372,7 @@ describe("[DNS client]", function()
 
 
     -- make a second request, result from cache, still called only once
-    res2, err2, _ = client.resolve(
+    res2, err2, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1424,7 +1386,7 @@ describe("[DNS client]", function()
 
     -- wait for expiry of Ttl and retry, still called only once
     sleep(emptyTtl+0.5 * staleTtl)
-    res2, err2 = client.resolve(
+    res2, err2 = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1438,7 +1400,7 @@ describe("[DNS client]", function()
 
     -- wait for expiry of staleTtl and retry, should be called twice now
     sleep(0.75 * staleTtl)
-    res2, err2 = client.resolve(
+    res2, err2 = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1474,7 +1436,7 @@ describe("[DNS client]", function()
 
     -- initial request to populate the cache
     local res1, res2, err1, err2, _
-    res1, err1, _ = client.resolve(
+    res1, err1, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1485,7 +1447,7 @@ describe("[DNS client]", function()
 
 
     -- try again, from cache, should still be called only once
-    res2, err2, _ = client.resolve(
+    res2, err2, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1499,7 +1461,7 @@ describe("[DNS client]", function()
 
     -- wait for expiry of ttl and retry, still 1 call, but now stale result
     sleep(badTtl + 0.5 * staleTtl)
-    res2, err2, _ = client.resolve(
+    res2, err2, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1512,7 +1474,7 @@ describe("[DNS client]", function()
 
     -- wait for expiry of staleTtl and retry, 2 calls, new result
     sleep(0.75 * staleTtl)
-    res2, err2, _ = client.resolve(
+    res2, err2, _ = cli:resolve(
     qname,
     { qtype = resolver.TYPE_A }
     )
@@ -1546,7 +1508,7 @@ describe("[DNS client]", function()
         -- so the scheduler loop can first schedule them all before actually
         -- starting resolving
         coroutine.yield(coroutine.running())
-        local result, _, _ = client.resolve(
+        local result, _, _ = cli:resolve(
         TEST_DOMAIN,
         { qtype = resolver.TYPE_A }
         )
@@ -1624,7 +1586,7 @@ describe("[DNS client]", function()
         -- so the scheduler loop can first schedule them all before actually
         -- starting resolving
         coroutine.yield(coroutine.running())
-        local result, err, _ = client.resolve(name, {qtype = resolver.TYPE_A})
+        local result, err, _ = cli:resolve(name, {qtype = resolver.TYPE_A})
         table.insert(results, (result or err))
       end
 
