@@ -39,8 +39,8 @@ local valid_types = {
 }
 
 local hitstrs = {
-    [1] = "hit/lru",
-    [2] = "hit/shdict",
+    [1] = "hit_lru",
+    [2] = "hit_shm",
 }
 
 local client_errors = {     -- client specific errors
@@ -54,6 +54,26 @@ local client_errors = {     -- client specific errors
 --- APIs
 local _M = {}
 local mt = { __index = _M }
+
+
+local function stats_init(stats, name)
+    if not stats[name] then
+        stats[name] = {
+            runs = 0,
+            query = 0,
+            fails = 0,
+            hit_lru = 0,
+            hit_shm = 0,
+            cname = 0,
+            stale = 0,
+        }
+    end
+end
+
+
+local function stats_incr(stats, name, key)
+    stats[name][key] = stats[name][key] + 1
+end
 
 
 local function insert_last_type(cache, name, qtype)
@@ -157,6 +177,9 @@ function _M.new(opts)
 
     cache:purge(true)
 
+    -- TODO: add an async task to call cache:update() to update L1/LRU-cache
+    -- for the inserted value from other workers
+
     -- parse order
     local search_types = {}
     local order = opts.order or DEFAULT_ORDER
@@ -194,6 +217,7 @@ function _M.new(opts)
         hosts = hosts,
         enable_ipv6 = enable_ipv6,
         search_types = search_types,
+        stats = {}
     }, mt)
 end
 
@@ -273,28 +297,29 @@ end
 
 
 local function resolve_query(self, name, qtype, tries)
-    log(tries, "query")
+    --log(tries, "query")
+    local key = name .. ":" .. qtype
+    stats_incr(self.stats, key, "query")
 
     local r, err = resolver:new(self.r_opts)
     if not r then
         return nil, "failed to instantiate the resolver: " .. err
     end
 
-    logerr("r:qeury:", name)
     local options = { additional_section = true, qtype = qtype }
     local answers, err, q_tries = r:query(name, options, {})
     if r.destroy then
         r:destroy()
     end
-    logerr("r:query:", json(answers))
 
     if not answers then
-        log(tries, q_tries)
+        -- log(tries, q_tries)
+        stats_incr(self.stats, key, "fails")
         return nil, "DNS server error: " .. (err or "unknown")
     end
 
     process_answers(self, name, qtype, answers)
-    log(tries, answers.errstr or #answers)
+    --log(tries, answers.errstr or #answers)
 
     return answers, nil, answers.ttl
 end
@@ -320,7 +345,8 @@ local function resolve_name_type_callback(self, name, qtype, opts, tries)
     if answers and stale then
         ttl = (ttl or 0) + self.stale_ttl
         if ttl > 0 then
-            log(tries, "stale")
+            --log(tries, "stale")
+            stats_incr(self.stats, key, "stale")
             if not answers.stale then     -- first-time use, update it
                 start_stale_update_task(self, key, name, qtype)
                 answers.stale = true
@@ -355,7 +381,9 @@ end
 
 local function resolve_name_type(self, name, qtype, opts, tries)
     local key = name .. ":" .. qtype
-    log(tries, key)
+
+    stats_init(self.stats, key)
+    --log(tries, key)
 
     if detect_recursion(opts, key) then
         return nil, "recursion detected for name: " .. name
@@ -369,10 +397,11 @@ local function resolve_name_type(self, name, qtype, opts, tries)
     end
 
     if hit_level and hit_level < 3 then
-        log(tries, hitstrs[hit_level])
+        stats_incr(self.stats, key, hitstrs[hit_level])
+        --log(tries, hitstrs[hit_level])
     end
 
-    assert(answers or err)
+    --assert(answers or err)
 
     return answers, err
 end
@@ -428,22 +457,29 @@ local function resolve_all(self, name, opts, tries)
         return nil, "recursion detected for name: " .. name
     end
 
-    log(tries, name)
+    stats_init(self.stats, name)
+    stats_incr(self.stats, name, "runs")
 
+    --log(tries, name)
+
+    self.cache:update(0.0001)
     -- lookup fastly: no callback, which is only used for real network query
     local answers, err, hit_level = self.cache:get(name)
     if not answers then
         answers, err, tries = resolve_names_and_types(self, name, opts, tries)
         if answers then
+            --assert(name == answers[1].name, "name:"..name .." != ans name:" .. answers[1].name)
             self.cache:set(name, { ttl = answers.ttl }, answers)
         end
     else
-        log(tries, hitstrs[hit_level])
+        stats_incr(self.stats, name, hitstrs[hit_level])
+    --else log(tries, hitstrs[hit_level])
     end
 
     -- dereference CNAME
     if opts.qtype ~= TYPE_CNAME and answers and answers[1].type == TYPE_CNAME then
-        log(tries, "cname")
+        --log(tries, "cname")
+        stats_incr(self.stats, name, "cname")
         return resolve_all(self, answers[1].cname, opts, tries)
     end
 
@@ -503,7 +539,6 @@ end
 _M._resolve = _M.resolve
 
 function _M.resolve(name, r_opts, cache_only, tries)
-    ngx.log(ngx.ERR, "name:", json(name))
     local opts = { cache_only = cache_only }
     return dns_client:_resolve(name, opts, tries)
 end
