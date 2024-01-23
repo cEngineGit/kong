@@ -339,16 +339,13 @@ end
 local function resolve_name_type_callback(self, name, qtype, opts, tries)
     local key = name .. ":" .. qtype
 
-    local ttl, err, answers, stale = self.cache:peek(key, true)
-    if answers and stale then
+    local ttl, err, answers = self.cache:peek(key, true)
+    if answers and not answers.stale_used then
         ttl = (ttl or 0) + self.stale_ttl
         if ttl > 0 then
-            --log(tries, "stale")
             stats_incr(self.stats, key, "stale")
-            if not answers.stale then     -- first-time use, update it
-                start_stale_update_task(self, key, name, qtype)
-                answers.stale = true
-            end
+            start_stale_update_task(self, key, name, qtype)
+            answers.stale_used = true
             return answers, nil, ttl
         end
     end
