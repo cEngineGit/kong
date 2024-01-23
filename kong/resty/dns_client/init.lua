@@ -46,8 +46,6 @@ local hitstrs = {
 local client_errors = {     -- client specific errors
     [100] = "cache only lookup failed",
     [101] = "empty record received",
-    [102] = "invalid name, bad IPv4",
-    [103] = "invalid name, bad IPv6",
 }
 
 
@@ -407,7 +405,7 @@ local function resolve_name_type(self, name, qtype, opts, tries)
 end
 
 
-local function search_types(self, name, qtype)
+local function get_search_types(self, name, qtype)
     local input_types = qtype and { qtype } or self.search_types
     local checked_types = {}
     local types = {}
@@ -427,7 +425,7 @@ end
 
 
 local function resolve_names_and_types(self, name, opts, tries)
-    local types = search_types(self, name, opts.qtype)
+    local types = get_search_types(self, name, opts.qtype)
     local names = utils.search_names(name, self.resolv, self.hosts)
     local answers, err
 
@@ -462,13 +460,19 @@ local function resolve_all(self, name, opts, tries)
 
     --log(tries, name)
 
-    self.cache:update(0.0001)
     -- lookup fastly: no callback, which is only used for real network query
     local answers, err, hit_level = self.cache:get(name)
     if not answers then
+        if name:match("^%d+%.%d+%.%d+%.%d+$") then      -- IPv4
+            return {{ address = name, type = TYPE_A, class = 1, name = name }}
+        end
+
+        if name:match(":") then                         -- IPv6
+            return {{ address = utils.ipv6_bracket(name), type = TYPE_AAAA, class = 1, name = name }}
+        end
+
         answers, err, tries = resolve_names_and_types(self, name, opts, tries)
         if answers then
-            --assert(name == answers[1].name, "name:"..name .." != ans name:" .. answers[1].name)
             self.cache:set(name, { ttl = answers.ttl }, answers)
         end
     else

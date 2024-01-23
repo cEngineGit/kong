@@ -810,114 +810,40 @@ describe("[DNS client]", function()
     assert.equal("no available records", err)
   end)
 
-  it("fetching IPv4 address as A type", function()
-    assert(client.init())
+  it("fetching IP address #ttt", function()
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+
     local host = "1.2.3.4"
-
-    local answers = assert(client.resolve(host, { qtype = resolver.TYPE_A }))
-    assert.are.equal(#answers, 1)
-    assert.are.equal(resolver.TYPE_A, answers[1].type)
-    assert.are.equal(10*365*24*60*60, answers[1].ttl)  -- 10 year ttl
-
-    assert.equal(resolver.TYPE_A, cli.cache:get(host))
-  end)
-
-  it("fetching IPv4 address as SRV type", function()
-    assert(client.init())
-
-    local callcount = 0
-    query_func = function(self, original_query_func, name, options)
-      callcount = callcount + 1
-      return original_query_func(self, name, options)
-    end
-
-    local _, err, _ = client.resolve(
-    "1.2.3.4",
-    { qtype = resolver.TYPE_SRV },
-    false
-    )
-    assert.equal(0, callcount)
-    assert.equal(BAD_IPV4_ERROR, err)
-  end)
-
-  it("fetching IPv6 address as AAAA type", function()
-    assert(client.init())
+    local answers = cli:resolve(host)
+    assert.same(answers[1].address, host)
 
     local host = "[1:2::3:4]"
-
-    local answers = assert(client.resolve(host, { qtype = resolver.TYPE_AAAA }))
-    assert.are.equal(#answers, 1)
-    assert.are.equal(resolver.TYPE_AAAA, answers[1].type)
-    assert.are.equal(10*365*24*60*60, answers[1].ttl)  -- 10 year ttl
-    assert.are.equal(host, answers[1].address)
-
-    assert.equal(resolver.TYPE_AAAA, cli.cache:get(host))
-  end)
-
-  it("fetching IPv6 address as AAAA type (without brackets)", function()
-    assert(client.init())
+    local answers = cli:resolve(host)
+    assert.same(answers[1].address, host)
 
     local host = "1:2::3:4"
+    local answers = cli:resolve(host)
+    assert.same(answers[1].address, "[" .. host .. "]")
 
-    local answers = assert(client.resolve(host, { qtype = resolver.TYPE_AAAA }))
-    assert.are.equal(#answers, 1)
-    assert.are.equal(resolver.TYPE_AAAA, answers[1].type)
-    assert.are.equal(10*365*24*60*60, answers[1].ttl)  -- 10 year ttl
-    assert.are.equal("["..host.."]", answers[1].address) -- brackets added
-
-    assert.equal(resolver.TYPE_AAAA, cli.cache:get(host))
-  end)
-
-  it("fetching IPv6 address as SRV type", function()
-    assert(client.init())
-
-    local callcount = 0
-    query_func = function(self, original_query_func, name, options)
-      callcount = callcount + 1
-      return original_query_func(self, name, options)
-    end
-
-    local _, err, _ = client.resolve(
-    "[1:2::3:4]",
-    { qtype = resolver.TYPE_SRV },
-    false
-    )
-    assert.equal(0, callcount)
-    assert.equal(BAD_IPV6_ERROR, err)
-  end)
-
-  it("fetching invalid IPv6 address", function()
-    assert(client.init({
-      resolvConf = {
-        -- resolv.conf without `search` and `domain` options
-        "nameserver 198.51.100.0",
-      },
-    }))
-
-    local host = "[1::2:3::4]"  -- 2x double colons
-
-    local answers, err, history = client.resolve(host)
-    assert.is_nil(answers)
-    assert.equal(BAD_IPV6_ERROR, err)
-    assert(tostring(history):find("bad IPv6", nil, true))
+    -- ignore ipv6 format error, it only check ':'
+    local host = "[invalid ipv6 address:::]"
+    local answers = cli:resolve(host)
+    assert.same(answers[1].address, host)
   end)
 
   it("fetching IPv6 in an SRV answers adds brackets",function()
-    assert(client.init())
     local host = "hello.world"
     local address = "::1"
-    local entry = {
-      {
-        type = resolver.TYPE_SRV,
-        target = address,
-        port = 321,
-        weight = 10,
-        priority = 10,
-        class = 1,
-        name = host,
-        ttl = 10,
-      },
-    }
+    local entry = {{
+      type = resolver.TYPE_SRV,
+      target = address,
+      port = 321,
+      weight = 10,
+      priority = 10,
+      class = 1,
+      name = host,
+      ttl = 10,
+    }}
 
     query_func = function(self, original_query_func, name, options)
       if name == host and options.qtype == resolver.TYPE_SRV then
@@ -926,13 +852,9 @@ describe("[DNS client]", function()
       return original_query_func(self, name, options)
     end
 
-    local res, _, _ = client.resolve(
-    host,
-    { qtype = resolver.TYPE_SRV },
-    false
-    )
+    local cli = assert(client_new({ nameservers = TEST_NSS}))
+    local res, _, _ = cli:cesolve( host, { qtype = resolver.TYPE_SRV })
     assert.equal("["..address.."]", res[1].target)
-
   end)
 
   it("recursive lookups failure - single resolve", function()

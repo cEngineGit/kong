@@ -85,7 +85,7 @@ end
 
 function _M.ipv6_bracket(name)
     if name:match("^[^[].*:") then  -- not rigorous, but sufficient
-        name = "[" .. name .. "]"
+        return "[" .. name .. "]"
     end
     return name
 end
